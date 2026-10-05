@@ -28,6 +28,9 @@ func InitDB(dsn string) error {
 			})
 		dbInstance, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
 			Logger: newLogger,
+			NowFunc: func() time.Time {
+				return time.Now().UTC()
+			},
 		})
 
 		if err != nil {

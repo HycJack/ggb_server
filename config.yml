@@ -1,13 +1,13 @@
 server:
   name: ggb_server
-  port: 8081
-  mode: "test"  #test、prod、dev
+  port: 8080
+  mode: "prod"  #test、prod、dev
 
 db:
   host: "localhost"
   port: 3306
   user: "root"
-  password: "newpassword"
+  password: "Ai_edu2025"
   name: "ggb_gen"
   max_idle_conns: 10
   max_open_conns: 100
@@ -26,7 +26,7 @@ log:
 
 ai_model:
   deepseek:
-    apiKey: "sk-9320e048d0d04f37a99eaa4d984bbe86"
+    apiKey: "sk-9320e048d0d04f37a99eaa4d984bbe86"  # sk-qKo22ROUL4WXXh1UzY7fPtGjUWBcluE1nxvRiJUNC9UfoBD3
   stepfun:
     apiKey: "4qNfUujEuOkN0WWP9TNHRDfedWM6KWVE8KnErfKRicGBfj9JWkKA4QYktcqLPr4Ch"
   doubao:

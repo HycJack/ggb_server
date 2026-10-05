@@ -1,15 +1,39 @@
 package middleware
 
 import (
+	"ggb_server/internal/app/handler"
+	"ggb_server/internal/consts"
 	"ggb_server/internal/pkg/glog"
+	"ggb_server/internal/repository"
 	"ggb_server/internal/utils"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
+
+var whiteList = map[string]bool{
+	"/health" : true,
+	"/api/register": true,
+	"/api/login":    true,
+	"/static":       true,
+}
+
+func SetHost() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if consts.URLPrefix != "" {
+			c.Next()
+		}
+		protocol := "http"
+		if c.Request.TLS != nil {
+			protocol = "https"
+		}
+		consts.URLPrefix = protocol + "://" + c.Request.Host
+	}
+}
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -28,6 +52,15 @@ func CORSMiddleware() gin.HandlerFunc {
 
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if whiteList[c.Request.URL.Path] {
+			c.Next()
+			return
+		}
+		if c.Request.Method == http.MethodGet && strings.Contains(c.Request.URL.Path, "/static/") {
+			c.Next()
+			return
+		}
+
 		tokenString := c.GetHeader("Authorization")
 
 		if tokenString == "" {
@@ -51,8 +84,24 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Set("user_id", claims.UserID)
-		c.Set("username", claims.Username)
+		if claims.ExpiresAt < time.Now().Unix() {
+			c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "Expired token"})
+			c.Abort()
+			return
+		}
+
+		db := handler.GetDB(c)
+		userRepo := repository.NewUserRepository()
+		user, err := userRepo.GetByUserId(db, claims.UserID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "user doesn't exist"})
+			c.Abort()
+			return
+		}
+
+		c.Set("userId", user.UserId)
+		c.Set("username", user.Username)
+		c.Set("user", user)
 
 		c.Next()
 	}

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ const DefaultCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 func GenerateRandomString(length int) string {
 	return GenerateRandomStringWithCharset(length, DefaultCharset)
 }
+
 func GenerateRandomStringWithCharset(length int, charset string) string {
 	result := make([]byte, length)
 	charsetLen := big.NewInt(int64(len(charset)))
@@ -32,4 +34,8 @@ func ProcessUrl(imgUrl string, prefix string) string {
 		imgPath = filepath.Join(rootPath, path)
 	}
 	return imgPath
+}
+
+func RecoverUrl(url string, prefix string, static string) string {
+	return fmt.Sprintf("%s/%s", prefix, url[strings.Index(url, static):])
 }

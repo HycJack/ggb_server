@@ -1,0 +1,21 @@
+CREATE TABLE `tb_ai_message` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT,
+    `session_id` bigint(20) NOT NULL COMMENT '关联的会话ID',
+    `user_message_id` bigint(20) NOT NULL COMMENT '关联的用户消息',
+    `user_id` char(36) NOT NULL,
+    `stage` tinyint(4) NOT NULL DEFAULT 0 COMMENT '阶段输出 1-提取 2-生成ggb 3-生成html',
+    `exec_time` int(11) NOT NULL DEFAULT 0 COMMENT '处理耗时(毫秒)',
+    `model_name` varchar(32) NOT NULL DEFAULT '' COMMENT '模型名',
+    `is_reason` tinyint(4) NOT NULL DEFAULT 0 COMMENT '0-正文 1-推理',
+    `status` tinyint(4) NOT NULL DEFAULT 0 COMMENT '状态：0-正常 1-撤回 2-删除',
+    `data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '扩展数据：{}' CHECK (json_valid(`data`)),
+    `is_del` tinyint(4) DEFAULT 0,
+    `created_at` timestamp NULL DEFAULT current_timestamp(),
+    `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+    `message` text DEFAULT NULL COMMENT '消息正文内容',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id_created_at` (`user_id`,`created_at`),
+    KEY `idx_message_id_created_at` (`user_message_id`, `created_at`),
+    KEY `idx_created_at` (`created_at`),
+    KEY `idx_updated_at` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

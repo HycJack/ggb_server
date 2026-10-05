@@ -44,7 +44,7 @@ func Test_reflect(t *testing.T) {
 func Test_NewClinet(t *testing.T) {
 	client := NewChatCompletionClient[*DouBaoChatCompletion](map[string]string{
 		"model": "model",
-	}, nil, nil)
+	}, nil, nil, nil)
 	log.Println(client)
 }
 
@@ -64,7 +64,7 @@ func Test_Chat(t *testing.T) {
 		strings.ToLower("processStep"): string(consts.Classify),
 		strings.ToLower("contentType"): string(Classify),
 	}
-	client := NewChatCompletionClient[*StepFunChatCompletion](mapping, nil, nil)
+	client := NewChatCompletionClient[*StepFunChatCompletion](mapping, nil, nil, nil)
 
 	res, err := client.ChatCompletion()
 
@@ -77,10 +77,10 @@ func Test_Chat(t *testing.T) {
 
 func Test_ChatCompletion(t *testing.T) {
 	client := NewChatCompletionClient[*ChatCompletionClient](map[string]string{
-		"model":                        string(consts.DeepSeekChat),
+		"model":                        string(consts.TencentDeepSeek),
 		"message":                      "你好 possible是什么意思",
 		strings.ToLower("processStep"): string(consts.Classify),
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	res, err := client.ChatCompletion()
 	if err != nil {

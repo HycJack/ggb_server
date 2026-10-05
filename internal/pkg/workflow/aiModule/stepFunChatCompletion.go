@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"ggb_server/internal/app/schema"
 	"ggb_server/internal/consts"
 	"io"
@@ -22,6 +23,8 @@ type StepFunChatCompletion struct {
 	Flusher      http.Flusher
 	StreamWriter io.Writer
 	ImgUrl       string
+
+	UserInfo *UserInfo
 }
 
 func (s StepFunChatCompletion) ChatCompletion() (Content, error) {
@@ -107,13 +110,17 @@ func (s StepFunChatCompletion) ChatCompletion() (Content, error) {
 	if len(response.Choices) > 0 {
 		outputContent := response.Choices[0].Message.Content
 		formatContent := Content{
-			Type:    OutputContent,
+			Type:    Reasoning,
 			Step:    s.ProcessStep,
 			Content: outputContent,
 		}
 		jsonBody, _ := json.Marshal(formatContent)
 		fullResponse.WriteString(outputContent)
+		fmt.Print(outputContent)
 		writeSSEEvent(s.StreamWriter, s.Flusher, string(jsonBody)) //也以流式形式返回前端
+	}
+	if fullResponse.Len() > 0 {
+		err = insertAiMessage(s.UserInfo, fullResponse.String(), string(s.Model), false, s.ProcessStep)
 	}
 	return Content{
 		Type:    OutputContent,
@@ -196,7 +203,7 @@ func (s StepFunChatCompletion) ChatCompletionStream() (Content, error) {
 	}
 
 	fullResponse := strings.Builder{}
-
+	reasoningResponse := strings.Builder{}
 	reader := bufio.NewReader(resp.Body)
 
 	recvTimeout := 10 * time.Second
@@ -243,9 +250,10 @@ func (s StepFunChatCompletion) ChatCompletionStream() (Content, error) {
 					Step:    s.ProcessStep,
 					Content: reasoningContent,
 				}
+				reasoningResponse.WriteString(reasoningContent)
+				fmt.Print(reasoningContent)
 				jsonBody, _ := json.Marshal(formatContent)
 				writeSSEEvent(s.StreamWriter, s.Flusher, string(jsonBody))
-				//fullResponse.WriteString(reasoningContent)
 			}
 
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
@@ -255,13 +263,20 @@ func (s StepFunChatCompletion) ChatCompletionStream() (Content, error) {
 					Step:    s.ProcessStep,
 					Content: output,
 				}
-				log.Printf("format content: %+v\n", output)
 				jsonBody, _ := json.Marshal(formatContent)
 				writeSSEEvent(s.StreamWriter, s.Flusher, string(jsonBody))
 				fullResponse.WriteString(output)
 			}
 		}
 	}
+
+	if reasoningResponse.Len() > 0 {
+		err = insertAiMessage(s.UserInfo, reasoningResponse.String(), string(s.Model), true, s.ProcessStep)
+	}
+	if fullResponse.Len() > 0 {
+		err = insertAiMessage(s.UserInfo, fullResponse.String(), string(s.Model), false, s.ProcessStep)
+	}
+
 	return Content{
 		Type:    OutputContent,
 		Content: fullResponse.String(),

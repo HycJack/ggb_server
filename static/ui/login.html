@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户认证</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .auth-container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 350px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-top: 1rem;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .tab-container {
+            display: flex;
+            margin-bottom: 1.5rem;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 0.5rem;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            border-bottom: 2px solid #4CAF50;
+            font-weight: bold;
+        }
+        .hidden {
+            display: none;
+        }
+        .error {
+            color: red;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <h1>用户认证</h1>
+        
+        <div class="tab-container">
+            <div class="tab active" onclick="showTab('login')">登录</div>
+            <div class="tab" onclick="showTab('register')">注册</div>
+        </div>
+        
+        <!-- 登录表单 -->
+        <form id="login-form" class="auth-form">
+            <div class="form-group">
+                <label for="login-username">用户名</label>
+                <input type="text" id="login-username" required>
+                <div id="login-username-error" class="error hidden"></div>
+            </div>
+            <div class="form-group">
+                <label for="login-password">密码</label>
+                <input type="password" id="login-password" required>
+                <div id="login-password-error" class="error hidden"></div>
+            </div>
+            <button type="submit">登录</button>
+        </form>
+        
+        <!-- 注册表单 -->
+        <form id="register-form" class="auth-form hidden">
+            <div class="form-group">
+                <label for="register-username">用户名</label>
+                <input type="text" id="register-username" required>
+                <div id="register-username-error" class="error hidden"></div>
+            </div>
+            <div class="form-group">
+                <label for="register-password">密码</label>
+                <input type="password" id="register-password" required>
+                <div id="register-password-error" class="error hidden"></div>
+            </div>
+            <div class="form-group">
+                <label for="register-email">邮箱（选填）</label>
+                <input type="email" id="register-email">
+                <div id="register-email-error" class="error hidden"></div>
+            </div>
+            <div class="form-group">
+                <label for="register-invite-code">邀请码（选填）</label>
+                <input type="text" id="register-invite-code">
+                <div id="register-invite-code-error" class="error hidden"></div>
+            </div>
+            <button type="submit">注册</button>
+        </form>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // 切换标签页
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.auth-form').forEach(form => {
+                form.classList.add('hidden');
+            });
+            
+            // 激活当前标签页
+            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}-form`).classList.remove('hidden');
+        }
+
+        // 登录表单提交
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            
+            // 清除之前的错误信息
+            clearErrors();
+            
+            // 前端验证
+            if (!username) {
+                showError('login-username-error', '请输入用户名');
+                return;
+            }
+            
+            if (!password) {
+                showError('login-password-error', '请输入密码');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert('登录成功');
+                    localStorage.setItem('token', data.access_token);
+                    window.location.href = '/';
+                } else {
+                    showError('login-password-error', data.error || '登录失败');
+                }
+            } catch (error) {
+                showError('login-password-error', '网络错误，请重试');
+            }
+        });
+        
+        // 注册表单提交
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('register-username').value.trim();
+            const password = document.getElementById('register-password').value;
+            const email = document.getElementById('register-email').value.trim();
+            const inviteCode = document.getElementById('register-invite-code').value.trim();
+            
+            // 清除之前的错误信息
+            clearErrors();
+            
+            // 前端验证
+            if (!username) {
+                showError('register-username-error', '请输入用户名');
+                return;
+            }
+            
+            if (!password) {
+                showError('register-password-error', '请输入密码');
+                return;
+            }
+            
+            // 邮箱格式验证（如果提供了邮箱）
+            if (email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    showError('register-email-error', '请输入有效的邮箱地址');
+                    return;
+                }
+            }
+            
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&email=${encodeURIComponent(email)}&invite_code=${encodeURIComponent(inviteCode)}`
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert('注册成功，请登录');
+                    showTab('login');
+                } else {
+                    showError('register-invite-code-error', data.error || '注册失败');
+                }
+            } catch (error) {
+                showError('register-invite-code-error', '网络错误，请重试');
+            }
+        });
+        
+        function showError(elementId, message) {
+            const errorElement = document.getElementById(elementId);
+            errorElement.textContent = message;
+            errorElement.classList.remove('hidden');
+        }
+        
+        function clearErrors() {
+            // 清除所有错误信息
+            document.querySelectorAll('.error').forEach(error => {
+                error.textContent = '';
+                error.classList.add('hidden');
+            });
+        }
+    </script>
+</body>
+</html>

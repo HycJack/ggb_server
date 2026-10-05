@@ -35,14 +35,14 @@ func (j *JSON) Value() (driver.Value, error) {
 }
 
 func (j *JSON) MarshalJSON() ([]byte, error) {
-	if j == nil {
-		return []byte("null"), nil
+	if *j == nil { //表中data为null []byte为nil 需要返回一个json合法值
+		return []byte("{}"), nil
 	}
 	return *j, nil
 }
 
 func (j *JSON) UnmarshalJSON(data []byte) error {
-	if j == nil {
+	if *j == nil {
 		return errors.New("null input")
 	}
 	*j = append((*j)[0:0], data...)

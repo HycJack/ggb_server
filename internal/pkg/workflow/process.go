@@ -31,6 +31,8 @@ type Process struct {
 	Ctx         context.Context
 
 	config consts.Config
+
+	userInfo *aiModule.UserInfo
 }
 
 func NewProcess(userMessage string, imgUrl string, flusher http.Flusher, w io.Writer, ctx context.Context) *Process {
@@ -44,70 +46,45 @@ func NewProcess(userMessage string, imgUrl string, flusher http.Flusher, w io.Wr
 }
 
 func (p *Process) StartProcess(db *gorm.DB, message *model.Message) error {
+	if message == nil {
+		return errors.New("invalid message")
+	}
+	p.userInfo = &aiModule.UserInfo{
+		DB:            db,
+		UserId:        message.UserID,
+		SessionId:     message.SessionID,
+		UserMessageId: message.ID,
+	}
+
 	rawRes, processedRes, err := p.Classify()
-	workflow1 := model.Workflow{
-		SessionID: message.SessionID,
-		MessageID: message.ID,
-		Type:      1,
-		Input:     message.Message,
-		Output:    rawRes,
-	}
+	workflow1, err := p.insertWorkFlow(nil, nil, consts.IntentRecognition, message.Message, rawRes, false)
 	if err != nil {
 		return err
 	}
-	err = repository.NewWorkflowRepository[model.Workflow]().Create(db, &workflow1)
-	if err != nil {
-		return err
-	}
+
 	elements, err := p.ExtractElementsStream(processedRes)
 	if err != nil {
 		return err
 	}
 	input, _ := json.Marshal(processedRes)
-	workflow2 := model.Workflow{
-		SessionID: message.SessionID,
-		MessageID: message.ID,
-		RootID:    workflow1.ID,
-		ParentID:  workflow1.ID,
-		Type:      2,
-		Input:     string(input),
-		Output:    elements,
-	}
-	err = repository.NewWorkflowRepository[model.Workflow]().Create(db, &workflow2)
+	workflow2, err := p.insertWorkFlow(&workflow1.ID, &workflow1.ID, consts.ExtractElement, string(input), elements, p.config.Extract.Skip)
 	if err != nil {
 		return err
 	}
-	commands, err := p.GenerateGGB(elements)
+
+	filterEle := filterElements(elements)
+	commands, err := p.GenerateGGB(filterEle)
 	if err != nil {
 		return err
 	}
-	workflow3 := model.Workflow{
-		SessionID: message.SessionID,
-		MessageID: message.ID,
-		RootID:    workflow1.ID,
-		ParentID:  workflow2.ID,
-		Type:      3,
-		Input:     elements,
-		Output:    commands,
-	}
-	err = repository.NewWorkflowRepository[model.Workflow]().Create(db, &workflow3)
+	workflow3, err := p.insertWorkFlow(&workflow1.ID, &workflow2.ID, consts.GenerateGGB, filterEle, commands, p.config.GenGGB.Skip)
 	if err != nil {
 		return err
 	}
-	res, err := p.GenerateHTML(commands)
-	if err != nil {
-		return err
-	}
-	workflow4 := model.Workflow{
-		SessionID: message.SessionID,
-		MessageID: message.ID,
-		RootID:    workflow1.ID,
-		ParentID:  workflow3.ID,
-		Type:      4,
-		Input:     elements,
-		Output:    res,
-	}
-	err = repository.NewWorkflowRepository[model.Workflow]().Create(db, &workflow4)
+
+	filterCmd := filterCommands(commands)
+	html, err := p.GenerateHTML(filterCmd)
+	_, err = p.insertWorkFlow(&workflow1.ID, &workflow3.ID, consts.GenerateHTML, filterCmd, html, p.config.GenHTML.Skip)
 	return err
 }
 
@@ -131,20 +108,24 @@ func (p *Process) GenerateGGB(elements string) (string, error) {
 }
 
 func (p *Process) GenerateHTML(command string) (string, error) {
-	filter := filterCommands(command)
 	if p.config.GenHTML.Skip {
-		return filter, nil
+		return command, nil
 	}
-	return p.doGenHTML(filter)
+	res, err := p.doGenHTML(command)
+	if err != nil {
+		return "", err
+	}
+	return filterHTML(res), nil
 }
 
 func (p *Process) doClassification() (string, map[string]string, error) {
 	imgUrl := p.ImgUrl
 	if imgUrl != "" && (strings.Contains(imgUrl, "localhost") || strings.Contains(imgUrl, "127.0.0.1")) {
 		imgPath := utils.ProcessUrl(imgUrl, config.Cfg.Static.Path)
+		p.ImgUrl = imgPath
 		file, err := os.Open(imgPath)
 		if err != nil {
-			log.Println("Error opening file error: ", err)
+			log.Println("Error opening file error1: ", err)
 			return "", nil, err
 		}
 		defer file.Close()
@@ -153,22 +134,23 @@ func (p *Process) doClassification() (string, map[string]string, error) {
 			log.Println("Error reading file error: ", err)
 			return "", nil, err
 		}
-		imgBase64 := fmt.Sprintf("data:image/%s;base64,%s", strings.ToLower(filepath.Ext(imgPath)), base64.StdEncoding.EncodeToString(fileContent))
+		imgBase64 := fmt.Sprintf("data:image/%s;base64,%s", strings.TrimPrefix(strings.ToLower(filepath.Ext(imgPath)), "."), base64.StdEncoding.EncodeToString(fileContent))
 		imgUrl = imgBase64
 	}
 
 	mapping := map[string]string{
-		"model":                        string(consts.StepFuncChat1oTurbo),
-		"message":                      p.UserMessage,
-		strings.ToLower("imgUrl"):      imgUrl,
-		strings.ToLower("processStep"): string(consts.Classify),
-		strings.ToLower("contentType"): string(aiModule.Classify),
+		"model":                         string(consts.DouBaoSeed1V6),
+		"message":                       p.UserMessage,
+		strings.ToLower("imgUrl"):       imgUrl,
+		strings.ToLower("processStep"):  string(consts.Classify),
+		strings.ToLower("contentType"):  string(consts.Classify),
+		strings.ToLower("thinkingType"): string(arkModel.ThinkingTypeEnabled),
 	}
 
-	client := aiModule.NewChatCompletionClient[*aiModule.StepFunChatCompletion](mapping, p.Flusher, p.W)
+	client := aiModule.NewChatCompletionClient[*aiModule.DouBaoChatCompletion](mapping, p.Flusher, p.W, p.userInfo)
 	res, err := client.ChatCompletion()
 	if err != nil {
-		log.Printf("type: %v, step: %v, content: %v\n", res.Type, res.Step, res.Content)
+		log.Println(err)
 		return "", nil, err
 	}
 	log.Println("\n[classify content]: ", res.Content)
@@ -176,6 +158,9 @@ func (p *Process) doClassification() (string, map[string]string, error) {
 	classifyRes, err := p.seekForClassificationRes(res)
 	if err != nil {
 		return "", nil, err
+	}
+	if classifyRes["类型"] == string(consts.Other) {
+		return "", nil, errors.New("classification result error")
 	}
 	return res.Content, classifyRes, nil
 }
@@ -188,9 +173,7 @@ func (p *Process) seekForClassificationRes(content aiModule.Content) (map[string
 		return nil, errors.New("classification result error")
 	}
 	log.Println("match result: ", matches)
-
-	res := map[string]string{}
-	err := json.Unmarshal([]byte(matches), &res)
+	res, err := safeUnmarshalWithLatex(matches)
 	if err != nil {
 		log.Println("Error unmarshalling classification result error: ", err)
 		return nil, err
@@ -222,6 +205,8 @@ func (p *Process) lookUpClassification(classify map[string]string) consts.Config
 		return consts.ConfigMapping[consts.Knowledge]
 	case string(consts.Other):
 		return consts.ConfigMapping[consts.Other]
+	case string(consts.CommonGGBPlot):
+		return consts.ConfigMapping[consts.CommonGGBPlot]
 	default:
 		return consts.ConfigMapping[consts.UnknownType]
 	}
@@ -237,11 +222,12 @@ func (p *Process) doExtract(classify map[string]string) (string, error) {
 		strings.ToLower("contentType"): string(aiModule.Reasoning),
 	}
 	if classify["类型"] == string(consts.G3D) {
-		if p.ImgUrl != "" {
-			imgUrl := p.ImgUrl
-			file, err := os.Open(imgUrl)
+		imgUrl := p.ImgUrl
+		if p.ImgUrl != "" && (strings.Contains(imgUrl, "localhost") || strings.Contains(imgUrl, "127.0.0.1")) {
+			url := utils.ProcessUrl(imgUrl, config.Cfg.Static.Path)
+			file, err := os.Open(url)
 			if err != nil {
-				log.Println("Error opening file error: ", err)
+				log.Println("Error opening file error2: ", err)
 				return "", err
 			}
 			defer file.Close()
@@ -251,23 +237,24 @@ func (p *Process) doExtract(classify map[string]string) (string, error) {
 				return "", err
 			}
 			imgBase64 := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(fileContent))
-			mapping["imgUrl"] = imgBase64
+			imgUrl = imgBase64
 		}
 
-		mapping["model"] = string(consts.StepFuncChat1oTurbo)
-		client := aiModule.NewChatCompletionClient[*aiModule.StepFunChatCompletion](mapping, p.Flusher, p.W)
+		//mapping["model"] = string(consts.StepFuncChat1oTurbo)
+		mapping[strings.ToLower("imgUrl")] = imgUrl
+		/*		client := aiModule.NewChatCompletionClient[*aiModule.StepFunChatCompletion](mapping, p.Flusher, p.W, p.userInfo)
 
-		res, err := client.ChatCompletion()
-		if err != nil {
-			log.Printf("type: %v, step: %v, content: %v\n\n", res.Type, res.Step, res.Content)
-			return "", err
-		}
-		return res.Content, err
+				res, err := client.ChatCompletionStream()
+				if err != nil {
+					log.Println("error occurred when extract: ", err)
+					return "", err
+				}
+				return res.Content, err*/
 	}
 
 	mapping[strings.ToLower("thinkingType")] = string(arkModel.ThinkingTypeEnabled)
 	var client aiModule.ChatCompletionInterface
-	client = aiModule.NewChatCompletionClient[*aiModule.DouBaoChatCompletion](mapping, p.Flusher, p.W)
+	client = aiModule.NewChatCompletionClient[*aiModule.DouBaoChatCompletion](mapping, p.Flusher, p.W, p.userInfo)
 
 	res, err := client.ChatCompletionStream()
 	if err != nil {
@@ -280,22 +267,21 @@ func (p *Process) doExtract(classify map[string]string) (string, error) {
 }
 
 func (p *Process) doGenGGB(elements string) (string, error) {
-	filtered := filterElements(elements)
 	reader := strings.Builder{}
 	reader.WriteString("数学元素: \n")
-	reader.WriteString(filtered)
+	reader.WriteString(elements)
 	mapping := map[string]string{
 		"model":                        string(consts.DeepSeekChat),
 		"message":                      reader.String(),
 		strings.ToLower("processStep"): string(p.config.GenGGB.ProcessStep),
 	}
-	client := aiModule.NewChatCompletionClient[*aiModule.ChatCompletionClient](mapping, p.Flusher, p.W)
+	client := aiModule.NewChatCompletionClient[*aiModule.ChatCompletionClient](mapping, p.Flusher, p.W, p.userInfo)
 	res, err := client.ChatCompletion()
 	if err != nil {
 		log.Printf("type: %v, step: %v, content: %v\n", res.Type, res.Step, res.Content)
 		return "", err
 	}
-	log.Println("\n[gen ggb content]: ", res.Content)
+	log.Print("\n[gen ggb content]: ", res.Content)
 	return res.Content, nil
 }
 
@@ -305,7 +291,7 @@ func (p *Process) doGenHTML(command string) (string, error) {
 		"message":                      command,
 		strings.ToLower("processStep"): string(p.config.GenHTML.ProcessStep),
 	}
-	client := aiModule.NewChatCompletionClient[*aiModule.ChatCompletionClient](mapping, p.Flusher, p.W)
+	client := aiModule.NewChatCompletionClient[*aiModule.ChatCompletionClient](mapping, p.Flusher, p.W, p.userInfo)
 	res, err := client.ChatCompletion()
 	if err != nil {
 		log.Printf("type: %v, step: %v, content: %v\n", res.Type, res.Step, res.Content)
@@ -351,4 +337,79 @@ func filterCommands(elements string) string {
 	contentStart := startIdx + len(startTag)
 	contentEnd := startIdx + endIdx
 	return elements[contentStart:contentEnd]
+}
+
+// filterHTML 从文本中提取完整的HTML代码
+func filterHTML(html string) string {
+	// 查找 <!DOCTYPE html> 的开始位置
+	doctypeStart := strings.Index(html, "<!DOCTYPE html>")
+	if doctypeStart == -1 {
+		// 如果没有 DOCTYPE，尝试查找 <html> 标签
+		htmlStart := strings.Index(html, "<html")
+		if htmlStart == -1 {
+			return html
+		}
+		doctypeStart = htmlStart
+	}
+
+	// 查找 </html> 的结束位置
+	endTag := "</html>"
+	endIdx := strings.Index(html[doctypeStart:], endTag)
+	if endIdx == -1 {
+		return html
+	}
+
+	// 计算结束位置
+	endPos := doctypeStart + endIdx + len(endTag)
+
+	// 提取完整的HTML文档
+	htmlDoc := html[doctypeStart:endPos]
+
+	return htmlDoc
+}
+
+func (p *Process) insertWorkFlow(rootId, parentId *uint, workflowType consts.WorkFlowType, input, output string, skip bool) (*model.Workflow, error) {
+	if skip {
+		tmp := uint(0)
+		if parentId == nil {
+			parentId = &tmp
+		}
+		return &model.Workflow{
+			Model: model.Model{
+				ID: *parentId,
+			},
+		}, nil
+	}
+	if p.userInfo == nil {
+		return nil, fmt.Errorf("userInfo is nil")
+	}
+	workflow := &model.Workflow{
+		SessionID: p.userInfo.SessionId,
+		MessageID: p.userInfo.UserMessageId,
+		Type:      int(workflowType),
+		Input:     model.RawString(input),
+		Output:    model.RawString(output),
+	}
+	if rootId != nil {
+		workflow.RootID = *rootId
+	}
+	if parentId != nil {
+		workflow.ParentID = *parentId
+	}
+	err := repository.NewWorkflowRepository[model.Workflow]().Create(p.userInfo.DB, workflow)
+	return workflow, err
+}
+
+func safeUnmarshalWithLatex(matches string) (map[string]string, error) {
+	re := regexp.MustCompile(`"([^"\\]*(\\.[^"\\]*)*)"`)
+
+	safeJSON := re.ReplaceAllStringFunc(matches, func(s string) string {
+		content := s[1 : len(s)-1]
+		content = strings.ReplaceAll(content, `\`, `\\`)
+		return `"` + content + `"`
+	})
+
+	res := map[string]string{}
+	err := json.Unmarshal([]byte(safeJSON), &res)
+	return res, err
 }

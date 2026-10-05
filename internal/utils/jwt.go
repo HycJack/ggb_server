@@ -6,19 +6,23 @@ import (
 	"time"
 )
 
-var jwtSecret = []byte("secret")
+var jwtSecret []byte
+
+func InitJWTSecret(secret string) {
+	jwtSecret = []byte(secret)
+}
 
 type Claims struct {
-	UserID   uint   `json:"user_id"`
+	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	jwt.StandardClaims
 }
 
-func GenerateToken(userID uint, username string) (string, error) {
+func GenerateToken(userId string, username string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &Claims{
-		UserID:   userID,
+		UserID:   userId,
 		Username: username,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
@@ -48,7 +52,8 @@ func ParseToken(tokenString string) (*Claims, error) {
 	})
 
 	if err != nil {
-		if ve, ok := err.(*jwt.ValidationError); ok {
+		var ve *jwt.ValidationError
+		if errors.As(err, &ve) {
 			if ve.Errors&jwt.ValidationErrorMalformed != 0 {
 				return nil, errors.New("token is malformed")
 			} else if ve.Errors&jwt.ValidationErrorExpired != 0 {

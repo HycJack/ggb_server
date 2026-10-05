@@ -25,6 +25,13 @@ func NewSessionRepository[T any]() SessionRepository[T] {
 func (r *SessionRepo[T]) GetByUserID(db *gorm.DB, userID string, page, pageSize int) ([]model.Session, error) {
 	var sessions []model.Session
 	err := db.Where("user_id = ? AND is_del = 0", userID).
+		Preload("Messages", func(db *gorm.DB) *gorm.DB {
+			return db.Preload("AiMessages", func(db *gorm.DB) *gorm.DB {
+				return db.Where("stage IN (1, 3)").Order("created_at ASC, is_reason DESC")
+			}).
+				Preload("Resources").
+				Order("created_at DESC")
+		}).
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Order("created_at DESC").

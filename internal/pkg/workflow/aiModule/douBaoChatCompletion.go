@@ -23,9 +23,11 @@ type DouBaoChatCompletion struct {
 	Flusher      http.Flusher
 	StreamWriter io.Writer
 	ContentType  Type
+	ImgUrl       string
 
 	douBaoClient *arkruntime.Client
 	ThinkingType model.ThinkingType
+	UserInfo     *UserInfo
 }
 
 func NewClient() *arkruntime.Client {
@@ -53,8 +55,27 @@ func (d DouBaoChatCompletion) ChatCompletion() (Content, error) {
 			},
 		},
 		Thinking: &model.Thinking{
-			Type: model.ThinkingType(d.ThinkingType),
+			Type: d.ThinkingType,
 		},
+	}
+	if d.ImgUrl != "" {
+		req.Messages[0] = &model.ChatCompletionMessage{
+			Role: model.ChatMessageRoleSystem,
+			Content: &model.ChatCompletionMessageContent{
+				ListValue: []*model.ChatCompletionMessageContentPart{
+					{
+						Type: "image_url",
+						ImageURL: &model.ChatMessageImageURL{
+							URL: d.ImgUrl,
+						},
+					},
+					{
+						Type: "text",
+						Text: consts.ProcessStepMapping[d.ProcessStep],
+					},
+				},
+			},
+		}
 	}
 	ctx := d.Ctx
 	if ctx == nil {
@@ -66,9 +87,19 @@ func (d DouBaoChatCompletion) ChatCompletion() (Content, error) {
 	}
 	fullResponse := strings.Builder{}
 	if resp.Choices[0].Message.ReasoningContent != nil {
-		content := *resp.Choices[0].Message.ReasoningContent
+		content := *resp.Choices[0].Message.Content.StringValue
+		formatContent := Content{
+			Type:    OutputContent,
+			Step:    d.ProcessStep,
+			Content: content,
+		}
+		jsonBody, _ := json.Marshal(formatContent)
 		fullResponse.WriteString(content)
-		writeSSEEvent(d.StreamWriter, d.Flusher, content)
+		fmt.Println(content)
+		writeSSEEvent(d.StreamWriter, d.Flusher, string(jsonBody))
+	}
+	if fullResponse.Len() > 0 {
+		err = insertAiMessage(d.UserInfo, fullResponse.String(), string(d.Model), false, d.ProcessStep)
 	}
 	return Content{
 		Type:    OutputContent,
@@ -99,6 +130,25 @@ func (d DouBaoChatCompletion) ChatCompletionStream() (Content, error) {
 			},
 		},
 	}
+	if d.ImgUrl != "" {
+		req.Messages[0] = &model.ChatCompletionMessage{
+			Role: model.ChatMessageRoleSystem,
+			Content: &model.ChatCompletionMessageContent{
+				ListValue: []*model.ChatCompletionMessageContentPart{
+					{
+						Type: "image_url",
+						ImageURL: &model.ChatMessageImageURL{
+							URL: d.ImgUrl,
+						},
+					},
+					{
+						Type: "text",
+						Text: consts.ProcessStepMapping[d.ProcessStep],
+					},
+				},
+			},
+		}
+	}
 
 	stream, err := d.douBaoClient.CreateChatCompletionStream(ctx, req)
 	if err != nil {
@@ -107,7 +157,7 @@ func (d DouBaoChatCompletion) ChatCompletionStream() (Content, error) {
 	defer stream.Close()
 
 	fullResponse := strings.Builder{}
-
+	reasoningResponse := strings.Builder{}
 	recvTimeout := 10 * time.Second
 	recvTimer := time.NewTimer(recvTimeout)
 	defer recvTimer.Stop()
@@ -141,6 +191,7 @@ func (d DouBaoChatCompletion) ChatCompletionStream() (Content, error) {
 				Content: reasoningContent,
 			}
 			fmt.Print(reasoningContent)
+			reasoningResponse.WriteString(reasoningContent)
 			jsonBody, _ := json.Marshal(formatContent)
 			writeSSEEvent(d.StreamWriter, d.Flusher, string(jsonBody))
 		}
@@ -157,6 +208,14 @@ func (d DouBaoChatCompletion) ChatCompletionStream() (Content, error) {
 			fullResponse.WriteString(content)
 		}
 	}
+
+	if reasoningResponse.Len() > 0 {
+		err = insertAiMessage(d.UserInfo, reasoningResponse.String(), string(d.Model), true, d.ProcessStep)
+	}
+	if fullResponse.Len() > 0 {
+		err = insertAiMessage(d.UserInfo, fullResponse.String(), string(d.Model), false, d.ProcessStep)
+	}
+
 	return Content{
 		Type:    OutputContent,
 		Content: fullResponse.String(),

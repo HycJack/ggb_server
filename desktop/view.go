@@ -179,7 +179,8 @@ func (a *app) settingsModal(c *ui.Context, t *ui.Theme) {
 				ui.Text(c, "系统提示词").FontSize(12).TextColor(t.TextMuted)
 				ui.TextInput(c, &a.s.SystemPrompt)
 			})
-			ui.Checkbox(c, &a.s.AutoBoard, "自动把 GGB 指令画到画板")
+			ui.Checkbox(c, &a.s.UseTools, "启用画板工具调用（ReAct，推荐）")
+			ui.Checkbox(c, &a.s.AutoBoard, "自动把 GGB 指令画到画板（围栏兜底）")
 
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				if ui.Button(c, "取消").Clicked() {
@@ -377,10 +378,10 @@ func (a *app) boardPanel(c *ui.Context, t *ui.Theme) {
 				a.boardOp("export")
 			}
 			if ui.Button(c, "2D").Label("切到平面视图").Clicked() {
-				a.sendToBoard(false, "1", "")
+				a.sendToBoard(false, "AG", "")
 			}
 			if ui.Button(c, "3D").Label("切到立体视图").Clicked() {
-				a.sendToBoard(false, "T", "")
+				a.sendToBoard(false, "AT", "")
 			}
 			if ui.Button(c, "清空").Clicked() {
 				a.sendToBoard(true, "", "")

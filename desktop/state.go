@@ -34,7 +34,8 @@ type settings struct {
 	APIKey       string `json:"apiKey"`
 	Model        string `json:"model"`
 	SystemPrompt string `json:"systemPrompt"`
-	AutoBoard    bool   `json:"autoBoard"` // 自动把 ```ggb 围栏画到画板
+	AutoBoard    bool   `json:"autoBoard"` // 自动把 ```ggb 围栏画到画板（工具关闭时的兜底）
+	UseTools     bool   `json:"useTools"`  // ReAct 工具调用；旧配置文件缺失时回填 true
 }
 
 func settingsPath() (string, error) {
@@ -48,13 +49,14 @@ func settingsPath() (string, error) {
 // DefaultSystemPrompt 明确告诉模型：它有一块实时 GeoGebra 画板，
 // 把指令写进 ```ggb 围栏应用就会自动执行——没有这句，模型常以
 // "我无法操作 GeoGebra" 拒绝作图。
-const DefaultSystemPrompt = "你是一个内嵌在桌面应用里的数学画图助手，应用自带一块实时 GeoGebra 画板，你完全可以操作它：把 GeoGebra 指令逐行写进 ```ggb 围栏代码块，应用会自动逐条在画板上执行，用户看不到纯文字的图，只看得到画板上的结果。作图规范：每行一条指令；先创建对象再引用，常用写法如 A=(1,2)、Segment(A,B)、Circle(A,2)、Polygon(A,B,C)、f(x)=sin(x)、Intersect(f,g)；需要立体图形时直接用 3D 指令（Sphere、Cube、Pyramid、Prism 等），画板会自动切到 3D 视角；可用 ShowLabel / SetColor / SetCaption 控制标注与样式。回答结构：先用一两句话讲思路，然后给出指令围栏，最后总结画了什么。如果用户没给完整条件，按最常见的方式补全并说明。"
+const DefaultSystemPrompt = "你是一个内嵌在桌面应用里的数学画图助手，应用自带一块实时 GeoGebra 画板，你完全可以操作它。优先调用工具 geogebra_run 在画板上执行 GeoGebra 指令（也可以把指令写进 ```ggb 围栏代码块，应用会自动执行）；geogebra_read 可查询画板已有的对象；geogebra_export 仅在用户明确要求保存文件时调用。作图规范：每行一条指令，先创建对象再引用，常用写法如 A=(1,2)、Segment(A,B)、Circle(A,2)、Polygon(A,B,C)、f(x)=sin(x)、Intersect(f,g)；需要立体图形时直接用 3D 指令（Sphere、Cube、Pyramid、Prism 等）并指定 perspective=AT；可用 ShowLabel / SetColor / SetCaption 控制标注与样式。回答结构：先用一两句话讲思路，然后调用工具（或给指令围栏），最后根据工具返回的结果总结画了什么；若指令执行失败，修正后重试。如果用户没给完整条件，按最常见的方式补全并说明。"
 
 func defaultSettings() settings {
 	return settings{
 		APIBase:      "https://api.deepseek.com",
 		Model:        "deepseek-chat",
 		AutoBoard:    true,
+		UseTools:     true,
 		SystemPrompt: DefaultSystemPrompt,
 	}
 }
@@ -64,6 +66,13 @@ func loadSettings() settings {
 	if p, err := settingsPath(); err == nil {
 		if data, err := os.ReadFile(p); err == nil {
 			json.Unmarshal(data, &s)
+			// 旧版本文件没有 useTools 字段：默认开启 ReAct
+			var raw map[string]json.RawMessage
+			if json.Unmarshal(data, &raw) == nil {
+				if _, ok := raw["useTools"]; !ok {
+					s.UseTools = true
+				}
+			}
 			// 旧版本文件没有 systemPrompt 字段，或存的是旧版弱提示词：都升级到新默认
 			if s.SystemPrompt == "" || s.SystemPrompt == legacySystemPrompt {
 				s.SystemPrompt = DefaultSystemPrompt
@@ -188,10 +197,11 @@ type uiMsg struct {
 	html     string // 最近一次抽取到的完整 HTML（```html 围栏）
 	errText  string // 失败信息
 
-	step    string // 进行中的状态标签
-	done    bool
-	open    bool      // 思考块默认展开
-	started time.Time // 回复开始时间（ThinkingBlock 需要）
+	step      string // 进行中的状态标签
+	done      bool
+	open      bool      // 思考块默认展开
+	started   time.Time // 回复开始时间
+	usedTools bool      // 本条回复用过画板工具（围栏兜底跳过）
 
 	bitmap  *ui.Bitmap // 用户消息的图片（本地预览）
 	dataURL string     // 发给视觉模型的 data URL（不落盘）

@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -62,6 +63,9 @@ type app struct {
 	boardNote        string
 	boardSeq         int
 
+	boardMu      sync.Mutex
+	boardPending map[string]chan boardResult
+
 	md  markdown.Options
 	api *OpenAIClient
 }
@@ -74,6 +78,7 @@ func newApp() *app {
 	a.sidebarWidth = 260
 	a.chatWidth = 500
 	a.msgsOf = map[uint][]*uiMsg{}
+	a.boardPending = map[string]chan boardResult{}
 	if msgs, convs, err := loadHistory(); err == nil && len(convs) > 0 {
 		a.msgsOf = msgs
 		a.convs = convs
@@ -311,35 +316,123 @@ func (a *app) buildMessages(userText, imageDataURL string) []OAMessage {
 	return out
 }
 
-// streamChat 发起流式请求并把增量应用到占位回复上。
+// mutate 把状态修改派发到 UI 线程；无窗口（测试）时同步执行。
+func (a *app) mutate(f func()) {
+	if a.win == nil {
+		f()
+		return
+	}
+	a.win.Update(f)
+}
+
+// maxToolRounds 限制一次回答里 ReAct 的最大轮数，防止死循环。
+const maxToolRounds = 6
+
+// streamChat 发起流式请求；开启工具调用时跑 ReAct 循环：
+// 模型请求工具 → 在画板上同步执行 → 结果回传 → 模型继续，直到给出最终回答。
 func (a *app) streamChat(userText string, reply *uiMsg) {
-	history := a.buildMessages(userText, a.replyDataImage(reply))
+	messages := a.buildMessages(userText, a.replyDataImage(reply))
 	apply := func(ev OAEvent) {
-		a.win.Update(func() {
+		a.mutate(func() {
 			if ev.Reasoning != "" {
 				reply.thinking += ev.Reasoning
 			}
 			if ev.Content != "" {
 				reply.text += ev.Content
 				reply.step = ""
-				a.applyGGBFences(reply) // 围栏一到就画板
 			}
 		})
 	}
-	if err := a.api.Chat(a.s.Model, history, apply); err != nil {
-		a.win.Update(func() {
-			reply.errText = err.Error()
-			reply.done = true
-			a.saveAll()
-		})
-		return
+
+	useTools := a.s.UseTools && a.ggbView != nil
+	var tools []map[string]any
+	if useTools {
+		tools = BoardTools
 	}
-	a.win.Update(func() {
+
+	var res OAResult
+	for round := 0; ; round++ {
+		var err error
+		res, err = a.api.chat(a.s.Model, messages, tools, apply)
+		if err != nil {
+			a.mutate(func() {
+				reply.errText = err.Error()
+				reply.done = true
+				a.saveAll()
+			})
+			return
+		}
+		if res.Finish != "tool_calls" || len(res.ToolCalls) == 0 {
+			break
+		}
+		if round >= maxToolRounds {
+			a.mutate(func() { reply.errText = "工具调用轮次过多，已停止" })
+			break
+		}
+		a.mutate(func() {
+			reply.usedTools = true
+			reply.step = "正在操作画板…"
+		})
+		messages = append(messages, OAMessage{Role: "assistant", Content: res.Content, ToolCalls: res.ToolCalls})
+		for _, tc := range res.ToolCalls {
+			result := a.execTool(tc)
+			messages = append(messages, OAMessage{Role: "tool", ToolCallID: tc.ID, Content: result})
+		}
+	}
+
+	a.mutate(func() {
 		reply.done = true
-		a.applyGGBFences(reply)
+		if !reply.usedTools {
+			a.applyGGBFences(reply) // 围栏兜底：仅当模型没用工具时
+		}
 		a.applyHTMLFence(reply)
 		a.saveAll()
 	})
+}
+
+// execTool 执行模型请求的一个画板工具，返回给模型的 JSON 结果。
+func (a *app) execTool(call OAToolCall) string {
+	var args struct {
+		Commands    []string `json:"commands"`
+		Perspective string   `json:"perspective"`
+	}
+	_ = json.Unmarshal([]byte(call.Args), &args)
+	switch call.Name {
+	case "geogebra_run":
+		r := a.boardCall(boardMsg{Op: "run", Perspective: args.Perspective, Commands: args.Commands}, 30*time.Second)
+		if r.note != "" {
+			return `{"error":"` + r.note + `"}`
+		}
+		out, _ := json.Marshal(map[string]any{
+			"applied": r.applied,
+			"failed":  r.errors,
+			"objects": r.count,
+			"names":   r.names,
+		})
+		return string(out)
+	case "geogebra_read":
+		r := a.boardCall(boardMsg{Op: "read"}, 15*time.Second)
+		out, _ := json.Marshal(map[string]any{"objectCount": r.count, "names": r.names})
+		return string(out)
+	case "geogebra_export":
+		r := a.boardCall(boardMsg{Op: "export"}, 30*time.Second)
+		if r.b64 == "" {
+			return `{"error":"画板没有返回内容"}`
+		}
+		data, err := base64.StdEncoding.DecodeString(r.b64)
+		if err != nil {
+			return `{"error":"` + err.Error() + `"}`
+		}
+		home, _ := os.UserHomeDir()
+		path := filepath.Join(home, "Downloads", fmt.Sprintf("画板-%d.ggb", time.Now().Unix()))
+		if werr := os.WriteFile(path, data, 0o644); werr != nil {
+			return `{"error":"` + werr.Error() + `"}`
+		}
+		out, _ := json.Marshal(map[string]any{"saved": path})
+		return string(out)
+	default:
+		return `{"error":"unknown tool ` + call.Name + `"}`
+	}
 }
 
 // replyDataImage 取占位回复对应的那条用户消息里的图片（倒数第二条）。
@@ -453,6 +546,53 @@ func (a *app) sendBoardMsg(msg boardMsg) {
 		return
 	}
 	ggbCmdsEvent.Broadcast(string(payload))
+}
+
+// deliverBoard 把画板回调结果送到等待中的 boardCall；返回是否有人接收。
+func (a *app) deliverBoard(id string, r boardResult) bool {
+	a.boardMu.Lock()
+	ch := a.boardPending[id]
+	a.boardMu.Unlock()
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- r:
+	default:
+	}
+	return true
+}
+
+// boardCall 同步执行一个画板操作并等待页面回报（ReAct 工具调用用）。
+func (a *app) boardCall(msg boardMsg, timeout time.Duration) boardResult {
+	if a.ggbView == nil { // headless：确定性占位结果
+		switch msg.Op {
+		case "export":
+			return boardResult{b64: "ZGVtbw=="}
+		case "read":
+			return boardResult{count: 2, names: []string{"f", "A"}}
+		default:
+			return boardResult{applied: len(msg.Commands), count: len(msg.Commands)}
+		}
+	}
+	a.boardSeq++
+	msg.ID = "b" + strconv.Itoa(a.boardSeq)
+	ch := make(chan boardResult, 1)
+	a.boardMu.Lock()
+	a.boardPending[msg.ID] = ch
+	a.boardMu.Unlock()
+	defer func() {
+		a.boardMu.Lock()
+		delete(a.boardPending, msg.ID)
+		a.boardMu.Unlock()
+	}()
+	a.sendBoardMsg(msg)
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(timeout):
+		return boardResult{note: "画板响应超时（" + timeout.String() + "）"}
+	}
 }
 
 // ---- 工具 ----

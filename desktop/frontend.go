@@ -26,11 +26,21 @@ var webFS embed.FS
 // ggbCmdsEvent 是 Go → 页面的命令事件；负载是 JSON 字符串。
 var ggbCmdsEvent = mygo.NewEvent[string]("ggb-cmds")
 
+// boardResult 是画板回调的汇总结果，经 channel 送回等待中的 boardCall。
+type boardResult struct {
+	applied int
+	errors  []string
+	count   int
+	names   []string
+	b64     string
+	note    string
+}
+
 // boardMsg 是发给嵌入页的负载；op 缺省为 "run"（执行指令）。
 type boardMsg struct {
 	ID          string   `json:"id"`
 	Op          string   `json:"op,omitempty"`          // run | export | read | open
-	Perspective string   `json:"perspective,omitempty"` // "1"=2D，"T"=3D
+	Perspective string   `json:"perspective,omitempty"` // "AG"=代数+图形，"AT"=代数+3D
 	Reset       bool     `json:"reset,omitempty"`
 	Commands    []string `json:"commands"`
 	Base64      string   `json:"base64,omitempty"` // op=open 时的 .ggb 内容
@@ -48,6 +58,7 @@ func (g *GGBBridge) Ready(ctx context.Context) {
 // Report 由嵌入页在每批指令应用完后调用。
 func (g *GGBBridge) Report(ctx context.Context, id string, applied int, errors []string) {
 	a := g.app
+	a.deliverBoard(id, boardResult{applied: applied, errors: errors})
 	a.win.Update(func() {
 		a.boardBusy = false
 		a.boardApplied = applied
@@ -60,6 +71,7 @@ func (g *GGBBridge) State(ctx context.Context, id string, count int, namesJSON s
 	a := g.app
 	var names []string
 	json.Unmarshal([]byte(namesJSON), &names)
+	a.deliverBoard(id, boardResult{count: count, names: names})
 	a.win.Update(func() {
 		a.boardObjectCount = count
 		a.boardObjects = names
@@ -69,9 +81,13 @@ func (g *GGBBridge) State(ctx context.Context, id string, count int, namesJSON s
 	})
 }
 
-// Export 由嵌入页回调 .ggb 的 base64；Go 侧弹保存对话框写文件。
+// Export 由嵌入页回调 .ggb 的 base64。ReAct 工具调用路径下结果送回等待者；
+// 面板按钮路径弹保存对话框写文件。
 func (g *GGBBridge) Export(ctx context.Context, id, b64 string) {
 	a := g.app
+	if a.deliverBoard(id, boardResult{b64: b64}) {
+		return
+	}
 	if b64 == "" {
 		a.win.Update(func() { a.boardNote = "导出失败：画板没有返回内容" })
 		return
@@ -115,7 +131,7 @@ func inferPerspective(commands []string) string {
 	for _, cmd := range commands {
 		for _, sig := range threeDSignals {
 			if strings.Contains(cmd, sig) {
-				return "T"
+				return "AT"
 			}
 		}
 	}

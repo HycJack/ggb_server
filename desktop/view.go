@@ -12,65 +12,50 @@ import (
 func (a *app) view(c *ui.Context) {
 	t := c.Theme()
 
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		if a.showSidebar {
-			a.sidebar(c, t)
-			a.splitterV(c, &a.sidebarWidth, &a.sidebarDrag, 180, 420)
-		}
-
-		// 主区：标题行 + 欢迎页/消息流 + 输入器
-		ui.Column(c).Grow(1).FillHeight().MinWidth(0).Children(func() {
-			a.chatHeader(c, t)
-			switch {
-			case len(a.currentMsgs()) == 0:
-				a.welcome(c, t)
-			default:
-				msgs := a.currentMsgs()
-				a.list.Key = func(i int) any { return msgs[i].id }
-				a.list.FollowEnd = true
-				ui.List(c, &a.list, len(msgs), func(i int) {
-					a.message(c, t, msgs[i])
-				}).Grow(1).Padding(16, 20).Gap(16).Justify(ui.End).Children(func() {
-					if len(msgs) == 0 {
-						ui.Text(c, "发一条消息开始对话").TextColor(t.TextMuted).Margin(ui.Auto)
-					}
-				})
-			}
-			a.composer(c, t)
-		})
-
+	// 三栏用原生 ui.Split：分割条由框架托管（可拖动、支持键盘），不再手搓
+	rest := func() {
 		if a.showBoard {
-			a.splitterV(c, &a.boardWidth, &a.boardDrag, 300, 680)
-			a.boardPanel(c, t)
+			ui.Split(c, &a.chatWidth,
+				func() { a.chatPane(c, t) },
+				func() { a.boardPanel(c, t) },
+			).Fill()
+		} else {
+			a.chatPane(c, t)
 		}
-	})
+	}
+	if a.showSidebar {
+		ui.Split(c, &a.sidebarWidth,
+			func() { a.sidebar(c, t) },
+			rest,
+		).Fill()
+	} else {
+		rest()
+	}
 
 	a.settingsModal(c, t)
 }
 
-// splitterV 是一条可拖动的竖直分割线：拖动改 base 宽度，松手收拢偏移。
-func (a *app) splitterV(c *ui.Context, base *float32, offset *ui.Point, min, max float32) {
-	var handle ui.Element
-	ui.Row(c).Width(6).FillHeight().Shrink(0).AlignItems(ui.Center).Children(func() {
-		handle = ui.Box(c).Size(3, 40).Radius(2).Background(c.Theme().Border)
+// chatPane 是标题行 + 欢迎页/消息流 + 输入器。
+func (a *app) chatPane(c *ui.Context, t *ui.Theme) {
+	ui.Column(c).FillHeight().MinWidth(0).Children(func() {
+		a.chatHeader(c, t)
+		switch {
+		case len(a.currentMsgs()) == 0:
+			a.welcome(c, t)
+		default:
+			msgs := a.currentMsgs()
+			a.list.Key = func(i int) any { return msgs[i].id }
+			a.list.FollowEnd = true
+			ui.List(c, &a.list, len(msgs), func(i int) {
+				a.message(c, t, msgs[i])
+			}).Grow(1).Padding(16, 20).Gap(16).Justify(ui.End).Children(func() {
+				if len(msgs) == 0 {
+					ui.Text(c, "发一条消息开始对话").TextColor(t.TextMuted).Margin(ui.Auto)
+				}
+			})
+		}
+		a.composer(c, t)
 	})
-	handle.Draggable(offset, ui.DraggableOptions{Axis: ui.Horizontal})
-	if handle.Dragging() {
-		*base = clampF(*base+offset.X, min, max)
-	} else if offset.X != 0 {
-		*base = clampF(*base+offset.X, min, max)
-		*offset = ui.Point{}
-	}
-}
-
-func clampF(v, lo, hi float32) float32 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // ---- 侧栏 ----
@@ -363,7 +348,7 @@ func (a *app) message(c *ui.Context, t *ui.Theme, m *uiMsg) {
 
 // boardPanel 是右侧的 GeoGebra 画板：顶部工具行 + webview（无窗口时显示占位）。
 func (a *app) boardPanel(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).Width(a.boardWidth).FillHeight().Shrink(0).Gap(8).Padding(12).
+	ui.Column(c).FillHeight().Gap(8).Padding(12).
 		BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Background(t.Background).Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "GeoGebra 画板").Bold().FontSize(13)

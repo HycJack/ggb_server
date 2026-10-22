@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,12 +44,10 @@ type app struct {
 	attachBusy   bool
 	attachErr    string
 
-	// 布局
+	// 布局（宽度由原生 ui.Split 管理）
 	sidebarWidth float32
-	sidebarDrag  ui.Point
 	showSidebar  bool
-	boardWidth   float32
-	boardDrag    ui.Point
+	chatWidth    float32
 	showBoard    bool
 	showSettings bool
 
@@ -68,8 +68,8 @@ func newApp() *app {
 	a.s = loadSettings()
 	a.showSidebar = true
 	a.showBoard = true
-	a.sidebarWidth = 264
-	a.boardWidth = 440
+	a.sidebarWidth = 260
+	a.chatWidth = 500
 	a.msgsOf = map[uint][]*uiMsg{}
 	if msgs, convs, err := loadHistory(); err == nil && len(convs) > 0 {
 		a.msgsOf = msgs
@@ -148,48 +148,62 @@ func (a *app) deleteConversation(id uint) {
 
 // ---- 附件 ----
 
-// pickImage 选本地图片：立即出预览，读取 base64 供发送（视觉模型）。
+// pickImage 选本地图片：文件对话框在后台 goroutine 打开（绝不能在 UI
+// 线程同步等 sheet），像素解码也在后台做纯 CPU 部分，Bitmap 只在主线程创建。
 func (a *app) pickImage() {
 	if a.win == nil || a.attachBusy {
 		return
 	}
-	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent: a.win,
-		Title:  "选择题目图片",
-		Filters: []mygo.FileFilter{
-			{Name: "图片", Extensions: []string{"png", "jpg", "jpeg", "gif", "webp"}},
-		},
-	})
-	if err != nil || len(paths) == 0 {
-		return
-	}
-	a.attachPath = paths[0]
-	a.attachData = ""
-	a.attachBitmap = nil
-	a.attachErr = ""
 	a.attachBusy = true
-	a.attachSize = 0
-	path := paths[0]
 	go func() {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			bm, decErr := ui.DecodeBitmap(data)
-			mime := mimeOf(path)
-			a.win.Update(func() {
-				a.attachBusy = false
-				if decErr != nil {
-					a.attachErr = "图片解码失败：" + decErr.Error()
-					return
-				}
-				a.attachBitmap = bm
-				a.attachSize = int64(len(data))
-				a.attachData = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
-			})
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent: a.win,
+			Title:  "选择题目图片",
+			Filters: []mygo.FileFilter{
+				{Name: "图片", Extensions: []string{"png", "jpg", "jpeg", "gif", "webp"}},
+			},
+		})
+		if err != nil || len(paths) == 0 {
+			a.win.Update(func() { a.attachBusy = false })
 			return
+		}
+		path := paths[0]
+		a.win.Update(func() {
+			a.attachPath = path
+			a.attachData = ""
+			a.attachBitmap = nil
+			a.attachErr = ""
+			a.attachSize = 0
+		})
+
+		data, readErr := os.ReadFile(path)
+		mime := mimeOf(path)
+		var dataURL string
+		var img image.Image
+		var decErr error
+		if readErr == nil {
+			dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+			img, _, decErr = image.Decode(bytes.NewReader(data)) // 纯 CPU，png/jpg/gif
 		}
 		a.win.Update(func() {
 			a.attachBusy = false
-			a.attachErr = err.Error()
+			if readErr != nil {
+				a.attachErr = readErr.Error()
+				return
+			}
+			if decErr != nil {
+				// webp 等原生不支持的格式：DecodeBitmap 兜底（必须在主线程）
+				bm, bmErr := ui.DecodeBitmap(data)
+				if bmErr != nil {
+					a.attachErr = "图片解码失败：" + bmErr.Error()
+					return
+				}
+				a.attachBitmap = bm
+			} else {
+				a.attachBitmap = ui.NewBitmap(img)
+			}
+			a.attachData = dataURL
+			a.attachSize = int64(len(data))
 		})
 	}()
 }

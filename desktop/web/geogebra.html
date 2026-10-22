@@ -112,24 +112,80 @@
     return app.evalCommand(text) === true;
   }
 
+  function runCommands(msg) {
+    if (msg.reset) {
+      try { api().newConstruction(); } catch (e) { /* 空画板无需清理 */ }
+    }
+    if (msg.perspective) {
+      try { api().setPerspective(msg.perspective); } catch (e) { /* 保持原视角 */ }
+    }
+    var applied = 0, errors = [];
+    (msg.commands || []).forEach(function (cmd) {
+      var ok = false;
+      try { ok = applyOne(cmd); } catch (e) { ok = false; }
+      if (ok) { applied++; } else { errors.push(cmd); }
+    });
+    mygo.call('GGBBridge.Report', msg.id || '', applied, errors);
+    readState(msg.id || '');
+  }
+
+  // 读状态：对象数与名字清单回报给 Go
+  function readState(id) {
+    var app = api();
+    if (!app) return;
+    var names = [];
+    try { names = app.getAllObjectNames() || []; } catch (e) { names = []; }
+    var count = app.getObjectNumber();
+    if (!count && names.length) count = names.length;
+    mygo.call('GGBBridge.State', id || '', count, JSON.stringify(names));
+  }
+
+  // 导出 .ggb：getBase64 有多种回调形态，逐个试（与 geogebra-dsh 同思路）
+  function doExport(id) {
+    var app = api();
+    if (!app) return;
+    var done = false;
+    var deliver = function (b64) {
+      if (done) return;
+      done = true;
+      mygo.call('GGBBridge.Export', id || '', String(b64 || ''));
+    };
+    try { return deliver(app.getBase64()); } catch (e) { /* 试试回调形态 */ }
+    try { app.getBase64(deliver); } catch (e) { /* 再试双参形态 */ }
+    try { app.getBase64(function (b64) { deliver(b64); }); } catch (e) {
+      mygo.call('GGBBridge.Export', id || '', '');
+    }
+  }
+
+  // 打开 .ggb：base64 直接载入当前画板
+  function doOpen(id, b64) {
+    var app = api();
+    if (!app || !b64) { mygo.call('GGBBridge.State', id || '', 0, '[]'); return; }
+    try {
+      app.setBase64(b64, function () {
+        mygo.call('GGBBridge.State', id || '', app.getObjectNumber(), JSON.stringify(app.getAllObjectNames ? app.getAllObjectNames() || [] : []));
+      });
+    } catch (e) {
+      mygo.call('GGBBridge.Export', id || '', ''); // 让 Go 侧报错（复用导出错误通道不合适，改用 State 空回报）
+      mygo.call('GGBBridge.State', id || '', -1, JSON.stringify([String(e && e.message || e)]));
+    }
+  }
+
   function flush() {
     if (applying || !api() || pending.length === 0) return;
     applying = true;
     var msg = pending.shift();
     try {
-      if (msg.reset) {
-        try { api().newConstruction(); } catch (e) { /* 空画板无需清理 */ }
+      var op = msg.op || 'run';
+      if (op === 'export') {
+        doExport(msg.id || '');
+      } else if (op === 'read') {
+        readState(msg.id || '');
+      } else if (op === 'open') {
+        doOpen(msg.id || '', msg.base64 || '');
+      } else {
+        runCommands(msg);
       }
-      if (msg.perspective) {
-        try { api().setPerspective(msg.perspective); } catch (e) { /* 保持原视角 */ }
-      }
-      var applied = 0, errors = [];
-      (msg.commands || []).forEach(function (cmd) {
-        var ok = false;
-        try { ok = applyOne(cmd); } catch (e) { ok = false; }
-        if (ok) { applied++; } else { errors.push(cmd); }
-      });
-      mygo.call('GGBBridge.Report', msg.id || '', applied, errors);
     } finally {
       applying = false;
     }

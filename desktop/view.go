@@ -357,20 +357,29 @@ func (a *app) boardPanel(c *ui.Context, t *ui.Theme) {
 			case a.ggbView == nil:
 				status = "预览"
 			case a.boardBusy:
-				status = "应用中…"
+				status = "处理中…"
 			case !a.boardReady:
 				status = "加载中…"
+			case a.boardNote != "":
+				status = a.boardNote
 			case len(a.boardErrors) > 0:
 				status = strconv.Itoa(len(a.boardErrors)) + " 条失败"
+			case a.boardObjectCount > 0:
+				status = strconv.Itoa(a.boardObjectCount) + " 个对象"
 			case a.boardApplied > 0:
 				status = "已应用 " + strconv.Itoa(a.boardApplied) + " 条"
 			}
-			ui.Text(c, status).FontSize(11).TextColor(t.TextMuted)
-			ui.Spacer(c)
-			if ui.Button(c, "2D").Clicked() {
+			ui.Text(c, status).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			if ui.Button(c, "打开").Label("打开 .ggb 文件").Clicked() {
+				a.openGGBFile()
+			}
+			if ui.Button(c, "导出").Label("导出 .ggb 文件").Clicked() {
+				a.boardOp("export")
+			}
+			if ui.Button(c, "2D").Label("切到平面视图").Clicked() {
 				a.sendToBoard(false, "1", "")
 			}
-			if ui.Button(c, "3D").Clicked() {
+			if ui.Button(c, "3D").Label("切到立体视图").Clicked() {
 				a.sendToBoard(false, "T", "")
 			}
 			if ui.Button(c, "清空").Clicked() {

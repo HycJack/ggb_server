@@ -52,12 +52,15 @@ type app struct {
 	showSettings bool
 
 	// GeoGebra 画板
-	ggbView      *mygo.WebView
-	boardReady   bool
-	boardBusy    bool
-	boardApplied int
-	boardErrors  []string
-	boardSeq     int
+	ggbView          *mygo.WebView
+	boardReady       bool
+	boardBusy        bool
+	boardApplied     int
+	boardErrors      []string
+	boardObjectCount int
+	boardObjects     []string
+	boardNote        string
+	boardSeq         int
 
 	md  markdown.Options
 	api *OpenAIClient
@@ -397,6 +400,54 @@ func (a *app) sendToBoard(reset bool, perspective, text string) {
 		a.boardApplied = len(commands) // headless：假装全部成功，保证测试确定性
 		return
 	}
+	a.sendBoardMsg(msg)
+}
+
+// boardOp 发一个非 run 的画板操作（export / read）。
+func (a *app) boardOp(op string) {
+	if a.ggbView == nil {
+		return
+	}
+	a.boardSeq++
+	a.sendBoardMsg(boardMsg{ID: "b" + strconv.Itoa(a.boardSeq), Op: op})
+}
+
+// openGGBFile 选一个 .ggb 文件读入画板。
+func (a *app) openGGBFile() {
+	if a.win == nil || a.boardBusy {
+		return
+	}
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:  a.win,
+			Title:   "打开 GeoGebra 文件",
+			Filters: []mygo.FileFilter{{Name: "GeoGebra", Extensions: []string{"ggb"}}},
+		})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		data, readErr := os.ReadFile(paths[0])
+		a.win.Update(func() {
+			if readErr != nil {
+				a.boardNote = "读取失败：" + readErr.Error()
+				return
+			}
+			if a.ggbView == nil {
+				return
+			}
+			a.boardSeq++
+			a.boardBusy = true
+			a.boardNote = ""
+			a.sendBoardMsg(boardMsg{
+				ID:     "b" + strconv.Itoa(a.boardSeq),
+				Op:     "open",
+				Base64: base64.StdEncoding.EncodeToString(data),
+			})
+		})
+	}()
+}
+
+func (a *app) sendBoardMsg(msg boardMsg) {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return

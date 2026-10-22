@@ -10,6 +10,8 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/base64"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,12 +26,14 @@ var webFS embed.FS
 // ggbCmdsEvent 是 Go → 页面的命令事件；负载是 JSON 字符串。
 var ggbCmdsEvent = mygo.NewEvent[string]("ggb-cmds")
 
-// boardMsg 是发给嵌入页的命令负载。
+// boardMsg 是发给嵌入页的负载；op 缺省为 "run"（执行指令）。
 type boardMsg struct {
 	ID          string   `json:"id"`
+	Op          string   `json:"op,omitempty"`          // run | export | read | open
 	Perspective string   `json:"perspective,omitempty"` // "1"=2D，"T"=3D
 	Reset       bool     `json:"reset,omitempty"`
 	Commands    []string `json:"commands"`
+	Base64      string   `json:"base64,omitempty"` // op=open 时的 .ggb 内容
 }
 
 // GGBBridge 绑定给页面回调：画板就绪与指令应用结果。
@@ -49,6 +53,52 @@ func (g *GGBBridge) Report(ctx context.Context, id string, applied int, errors [
 		a.boardApplied = applied
 		a.boardErrors = errors
 	})
+}
+
+// State 由嵌入页回报画板对象数与名字清单（count=-1 表示出错，names[0] 是错误信息）。
+func (g *GGBBridge) State(ctx context.Context, id string, count int, namesJSON string) {
+	a := g.app
+	var names []string
+	json.Unmarshal([]byte(namesJSON), &names)
+	a.win.Update(func() {
+		a.boardObjectCount = count
+		a.boardObjects = names
+		if count < 0 && len(names) > 0 {
+			a.boardNote = "画板操作失败：" + names[0]
+		}
+	})
+}
+
+// Export 由嵌入页回调 .ggb 的 base64；Go 侧弹保存对话框写文件。
+func (g *GGBBridge) Export(ctx context.Context, id, b64 string) {
+	a := g.app
+	if b64 == "" {
+		a.win.Update(func() { a.boardNote = "导出失败：画板没有返回内容" })
+		return
+	}
+	a.boardBusy = true
+	go func() {
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+			Parent:      a.win,
+			Title:       "导出 GeoGebra 文件",
+			DefaultPath: "画板.ggb",
+		})
+		note := ""
+		if err == nil && path != "" {
+			data, decErr := base64.StdEncoding.DecodeString(b64)
+			if decErr != nil {
+				note = "导出失败：" + decErr.Error()
+			} else if werr := os.WriteFile(path, data, 0o644); werr != nil {
+				note = "导出失败：" + werr.Error()
+			} else {
+				note = "已导出 " + filepath.Base(path)
+			}
+		}
+		a.win.Update(func() {
+			a.boardBusy = false
+			a.boardNote = note
+		})
+	}()
 }
 
 // ---- 指令 → 画板 ----

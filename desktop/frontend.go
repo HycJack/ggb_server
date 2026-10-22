@@ -33,6 +33,7 @@ type boardResult struct {
 	count   int
 	names   []string
 	b64     string
+	image   string // 画板截图（data URL）
 	note    string
 }
 
@@ -52,14 +53,14 @@ type GGBBridge struct{ app *app }
 // Ready 由嵌入页在 applet 加载完成后调用。
 func (g *GGBBridge) Ready(ctx context.Context) {
 	a := g.app
-	a.win.Update(func() { a.boardReady = true })
+	a.mutate(func() { a.boardReady = true })
 }
 
 // Report 由嵌入页在每批指令应用完后调用。
 func (g *GGBBridge) Report(ctx context.Context, id string, applied int, errors []string) {
 	a := g.app
 	a.deliverBoard(id, boardResult{applied: applied, errors: errors})
-	a.win.Update(func() {
+	a.mutate(func() {
 		a.boardBusy = false
 		a.boardApplied = applied
 		a.boardErrors = errors
@@ -72,12 +73,22 @@ func (g *GGBBridge) State(ctx context.Context, id string, count int, namesJSON s
 	var names []string
 	json.Unmarshal([]byte(namesJSON), &names)
 	a.deliverBoard(id, boardResult{count: count, names: names})
-	a.win.Update(func() {
+	a.mutate(func() {
 		a.boardObjectCount = count
 		a.boardObjects = names
 		if count < 0 && len(names) > 0 {
 			a.boardNote = "画板操作失败：" + names[0]
 		}
+	})
+}
+
+// Image 由嵌入页回调画板截图（data URL）。画完后用来确认画得对不对。
+func (g *GGBBridge) Image(ctx context.Context, id, dataURL string) {
+	a := g.app
+	a.deliverBoard(id, boardResult{image: dataURL})
+	a.mutate(func() {
+		a.boardImageURL = dataURL
+		a.boardBitmapCache = nil // 换了图就重新解码
 	})
 }
 
@@ -89,7 +100,7 @@ func (g *GGBBridge) Export(ctx context.Context, id, b64 string) {
 		return
 	}
 	if b64 == "" {
-		a.win.Update(func() { a.boardNote = "导出失败：画板没有返回内容" })
+		a.mutate(func() { a.boardNote = "导出失败：画板没有返回内容" })
 		return
 	}
 	a.boardBusy = true
@@ -110,7 +121,7 @@ func (g *GGBBridge) Export(ctx context.Context, id, b64 string) {
 				note = "已导出 " + filepath.Base(path)
 			}
 		}
-		a.win.Update(func() {
+		a.mutate(func() {
 			a.boardBusy = false
 			a.boardNote = note
 		})

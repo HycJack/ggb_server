@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
@@ -10,6 +12,13 @@ import (
 
 	"github.com/egoist/mygo/ui"
 )
+
+// photoBytes 把图片编码成 PNG 字节。
+func photoBytes(img image.Image) []byte {
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	return buf.Bytes()
+}
 
 // screenshot 渲染一帧状态并写入 PNG，返回 tester（供断言）与文件路径。
 func screenshot(t *testing.T, name string, a *app) (*ui.Tester, string) {
@@ -95,6 +104,8 @@ func TestScreenshotConversation(t *testing.T) {
 	}
 	a.msgsOf[1][0].bitmap = ui.NewBitmap(photo)
 	a.boardApplied = 2
+	// 画板快照（模拟页面回传 data URL）
+	a.boardImageURL = "data:image/png;base64," + base64.StdEncoding.EncodeToString(photoBytes(photo))
 	tester, p := screenshot(t, "conversation", a)
 	if !tester.HasText("GeoGebra 画板") {
 		t.Errorf("board panel missing in %q", tester.Texts())

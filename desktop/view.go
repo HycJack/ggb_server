@@ -398,6 +398,9 @@ func (a *app) boardPanel(c *ui.Context, t *ui.Theme) {
 				status = "已应用 " + strconv.Itoa(a.boardApplied) + " 条"
 			}
 			ui.Text(c, status).FontSize(11).TextColor(t.TextMuted).Grow(1).SingleLine()
+			if ui.Button(c, "快照").Label("截取画板图像").Clicked() {
+				a.snapshotBoard()
+			}
 			if ui.Button(c, "打开").Label("打开 .ggb 文件").Clicked() {
 				a.openGGBFile()
 			}
@@ -429,6 +432,15 @@ func (a *app) boardPanel(c *ui.Context, t *ui.Theme) {
 				} else if a.boardApplied > 0 {
 					ui.Text(c, "最近一批指令："+strconv.Itoa(a.boardApplied)+" 条").TextColor(t.TextMuted).FontSize(12)
 				}
+			})
+		}
+		// 画板快照：画完后用来核对画得对不对
+		if bm := a.boardBitmap(); bm != nil {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "快照").FontSize(11).TextColor(t.TextMuted)
+				ui.Box(c).Shrink(0).Size(148, 96).Radius(8).Border(1, t.Border).Clip().Children(func() {
+					ui.Image(c, bm).Size(140, 90)
+				})
 			})
 		}
 	})

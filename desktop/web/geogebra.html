@@ -127,6 +127,32 @@
     });
     mygo.call('GGBBridge.Report', msg.id || '', applied, errors);
     readState(msg.id || '');
+    captureImage(msg.id || '');
+  }
+
+  // captureImage 截取画板图形视图，作为 data URL 回传（用于验收画得对不对）
+  function captureImage(id) {
+    var app = api();
+    if (!app) return;
+    var done = false;
+    var deliver = function (url) {
+      if (done) return;
+      done = true;
+      mygo.call('GGBBridge.Image', id || '', String(url || ''));
+    };
+    try {
+      var url = app.exportImage();          // 新版：返回 data URL
+      if (url) { deliver(url); return; }
+    } catch (e) { /* 试旧版形态 */ }
+    try {
+      app.exportImage(function (url) { deliver(url); });
+      return;
+    } catch (e) { /* 试 getPNG */ }
+    try {
+      var png = app.getPNG();                // 旧版：返回 base64（无 data: 前缀）
+      if (png) { deliver('data:image/png;base64,' + png); return; }
+    } catch (e) { /* 都没有 */ }
+    deliver('');
   }
 
   // 读状态：对象数与名字清单回报给 Go
@@ -183,6 +209,8 @@
         readState(msg.id || '');
       } else if (op === 'open') {
         doOpen(msg.id || '', msg.base64 || '');
+      } else if (op === 'image') {
+        captureImage(msg.id || '');
       } else {
         runCommands(msg);
       }

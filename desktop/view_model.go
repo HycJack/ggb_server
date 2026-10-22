@@ -62,6 +62,8 @@ type app struct {
 	boardObjectCount int
 	boardObjects     []string
 	boardNote        string
+	boardImageURL    string // 最近一次画板截图（data URL）
+	boardBitmapCache *ui.Bitmap
 	boardSeq         int
 
 	boardMu      sync.Mutex
@@ -470,6 +472,10 @@ func (a *app) execTool(call OAToolCall) string {
 		if r.note != "" {
 			return `{"error":"` + r.note + `"}`
 		}
+		// 画完后截一张图，供用户核对画得对不对
+		if img := a.boardCall(boardMsg{Op: "image"}, 20*time.Second); img.image != "" {
+			a.mutate(func() { a.boardImageURL = img.image })
+		}
 		out, _ := json.Marshal(map[string]any{
 			"applied": r.applied,
 			"failed":  r.errors,
@@ -561,6 +567,40 @@ func (a *app) sendToBoard(reset bool, perspective, text string) {
 		return
 	}
 	a.sendBoardMsg(msg)
+}
+
+// boardBitmap 返回画板快照位图；解码需要主线程，缓存住避免重复解码。
+func (a *app) boardBitmap() *ui.Bitmap {
+	if a.boardImageURL == "" {
+		return nil
+	}
+	if a.boardBitmapCache != nil {
+		return a.boardBitmapCache
+	}
+	raw := a.boardImageURL
+	if i := strings.Index(raw, ","); i >= 0 && strings.HasPrefix(raw, "data:") {
+		raw = raw[i+1:]
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	bm, err := ui.DecodeBitmap(data)
+	if err != nil {
+		return nil
+	}
+	a.boardBitmapCache = bm
+	return bm
+}
+
+// snapshotBoard 手动抓一张画板快照。
+func (a *app) snapshotBoard() {
+	r := a.boardCall(boardMsg{Op: "image"}, 20*time.Second)
+	if r.image == "" {
+		a.mutate(func() { a.boardNote = "截图失败" })
+		return
+	}
+	a.mutate(func() { a.boardImageURL = r.image })
 }
 
 // boardOp 发一个非 run 的画板操作（export / read）。

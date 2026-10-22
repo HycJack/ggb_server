@@ -1,17 +1,20 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/HycJack/MujicaUI/account"
 	"github.com/HycJack/MujicaUI/chat"
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 )
 
@@ -19,203 +22,344 @@ import (
 type app struct {
 	win *mygo.Window
 
-	// 认证
-	s        settings
-	logged   bool
-	login    account.LoginFormState
-	loginURL string
-	loginErr string
-	busy     bool // 登录/请求进行中
+	s settings // OpenAI 端点配置（持久化）
 
-	// 会话
+	// 会话（本地保存）
 	convs    []conversation
+	msgsOf   map[uint][]*uiMsg
+	convID   uint
+	nextConv uint
 	convSel  chat.ConversationListState
-	convID   uint // 当前打开的会话
-	loadingC bool
 
 	// 消息
-	msgs   []*uiMsg
 	list   chat.MessageListState
 	input  string
 	nextID int
 
-	// 共享的 markdown 渲染配置（全部消息共用一份）
-	md markdown.Options
+	// 附件（本地图片，base64 直发视觉模型）
+	attachPath   string
+	attachData   string // data:image/...;base64,...
+	attachBitmap *ui.Bitmap
+	attachSize   int64
+	attachBusy   bool
+	attachErr    string
 
-	api *Client
+	// 布局
+	sidebarWidth float32
+	sidebarDrag  ui.Point
+	showSidebar  bool
+	boardWidth   float32
+	boardDrag    ui.Point
+	showBoard    bool
+	showSettings bool
 
 	// GeoGebra 画板
 	ggbView      *mygo.WebView
-	showBoard    bool
 	boardReady   bool
 	boardBusy    bool
 	boardApplied int
 	boardErrors  []string
 	boardSeq     int
+
+	md  markdown.Options
+	api *OpenAIClient
 }
 
 func newApp() *app {
 	a := &app{}
 	a.s = loadSettings()
-	a.loginURL = a.s.ServerURL
-	a.logged = a.s.Token != ""
-	a.api = NewClient(a.s.ServerURL)
+	a.showSidebar = true
 	a.showBoard = true
+	a.sidebarWidth = 264
+	a.boardWidth = 440
+	a.msgsOf = map[uint][]*uiMsg{}
+	if msgs, convs, err := loadHistory(); err == nil && len(convs) > 0 {
+		a.msgsOf = msgs
+		a.convs = convs
+		a.nextConv = maxID(convs)
+	}
+	a.rebuildClient()
 	return a
 }
 
-func (a *app) setClient(url string) {
-	a.s.ServerURL = url
-	a.api = NewClient(url)
-}
-
-// ---- 动作 ----
-
-func (a *app) doLogin(accountName, password string, _ bool) {
-	if a.busy {
-		return
-	}
-	a.busy = true
-	a.loginErr = ""
-	run := func() (string, loginUserInfo, error) { return a.api.Login(accountName, password) }
-	finish := func(tok string, u loginUserInfo, err error) {
-		a.busy = false
-		if err != nil {
-			a.loginErr = err.Error()
-			a.login.EndSubmit(err.Error())
-			return
+func maxID(convs []conversation) uint {
+	var max uint
+	for _, cv := range convs {
+		if cv.ID > max {
+			max = cv.ID
 		}
-		a.s.Token, a.s.Username, a.s.UserID = tok, u.Username, u.UserId
-		saveSettings(a.s)
-		a.logged = true
-		a.login.EndSubmit("")
-		a.refreshConversations()
 	}
-	if a.win == nil { // headless：同步落定，保证测试确定性
-		tok, u, err := run()
-		finish(tok, u, err)
-		return
-	}
-	go func() {
-		tok, u, err := run()
-		a.win.Update(func() { finish(tok, u, err) })
-	}()
+	return max
 }
 
-func (a *app) logout() {
-	a.logged = false
-	a.s.Token = ""
+func (a *app) rebuildClient() {
+	a.api = NewOpenAIClient(a.s.APIBase, a.s.APIKey)
+}
+
+func (a *app) configured() bool {
+	return a.s.APIBase != "" && a.s.Model != ""
+}
+
+func (a *app) saveAll() {
 	saveSettings(a.s)
-	a.msgs = nil
-	a.convs = nil
-	a.convID = 0
-	a.convSel.Selected = ""
+	saveHistory(a.msgsOf, a.convs)
 }
 
-func (a *app) refreshConversations() {
-	if a.s.Token == "" {
-		return
-	}
-	a.loadingC = true
-	run := func() ([]conversation, error) { return a.api.Conversations(a.s.Token) }
-	done := func(cs []conversation, err error) {
-		a.loadingC = false
-		if err == nil {
-			a.convs = cs
+// ---- 会话 ----
+
+func (a *app) currentMsgs() []*uiMsg { return a.msgsOf[a.convID] }
+
+func (a *app) currentTitle() string {
+	for _, cv := range a.convs {
+		if cv.ID == a.convID {
+			return cv.Title
 		}
 	}
-	if a.win == nil {
-		cs, err := run()
-		done(cs, err)
-		return
-	}
-	go func() {
-		cs, err := run()
-		a.win.Update(func() { done(cs, err) })
-	}()
+	return "新对话"
 }
 
-// selectConversation 在用户点选会话后载入历史。
+func (a *app) newConversation() {
+	a.convID = 0
+	a.input = ""
+}
+
 func (a *app) selectConversation(id uint) {
 	if id == 0 || id == a.convID {
 		return
 	}
 	a.convID = id
-	a.msgs = nil
-	a.loadingC = true
-	run := func() ([]histMessage, error) { return a.api.History(a.s.Token, id) }
-	done := func(hist []histMessage, err error) {
-		a.loadingC = false
-		if err == nil {
-			a.msgs = toUiMsgs(hist)
+	a.input = ""
+	if _, ok := a.msgsOf[id]; !ok {
+		a.msgsOf[id] = nil
+	}
+}
+
+func (a *app) deleteConversation(id uint) {
+	delete(a.msgsOf, id)
+	for i, cv := range a.convs {
+		if cv.ID == id {
+			a.convs = append(a.convs[:i], a.convs[i+1:]...)
+			break
 		}
 	}
-	if a.win == nil {
-		hist, err := run()
-		done(hist, err)
+	if a.convID == id {
+		a.convID = 0
+	}
+	a.saveAll()
+}
+
+// ---- 附件 ----
+
+// pickImage 选本地图片：立即出预览，读取 base64 供发送（视觉模型）。
+func (a *app) pickImage() {
+	if a.win == nil || a.attachBusy {
 		return
 	}
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent: a.win,
+		Title:  "选择题目图片",
+		Filters: []mygo.FileFilter{
+			{Name: "图片", Extensions: []string{"png", "jpg", "jpeg", "gif", "webp"}},
+		},
+	})
+	if err != nil || len(paths) == 0 {
+		return
+	}
+	a.attachPath = paths[0]
+	a.attachData = ""
+	a.attachBitmap = nil
+	a.attachErr = ""
+	a.attachBusy = true
+	a.attachSize = 0
+	path := paths[0]
 	go func() {
-		hist, err := run()
-		a.win.Update(func() { done(hist, err) })
+		data, err := os.ReadFile(path)
+		if err == nil {
+			bm, decErr := ui.DecodeBitmap(data)
+			mime := mimeOf(path)
+			a.win.Update(func() {
+				a.attachBusy = false
+				if decErr != nil {
+					a.attachErr = "图片解码失败：" + decErr.Error()
+					return
+				}
+				a.attachBitmap = bm
+				a.attachSize = int64(len(data))
+				a.attachData = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+			})
+			return
+		}
+		a.win.Update(func() {
+			a.attachBusy = false
+			a.attachErr = err.Error()
+		})
 	}()
 }
 
-func (a *app) newConversation() {
-	a.convID = 0
-	a.convSel.Selected = ""
-	a.msgs = nil
+func mimeOf(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "image/png"
+	}
 }
 
-// send 发送一条消息：追加用户气泡与占位回复，再起 goroutine 流式填充。
+func (a *app) clearAttachment() {
+	a.attachPath = ""
+	a.attachData = ""
+	a.attachBitmap = nil
+	a.attachSize = 0
+	a.attachBusy = false
+	a.attachErr = ""
+}
+
+// ---- 发送与流式 ----
+
 func (a *app) send(text string) {
-	if a.streaming() || text == "" {
+	if a.streaming() || text == "" || !a.configured() {
 		return
 	}
+	// 新会话：先落一个 ID
+	if a.convID == 0 {
+		a.nextConv++
+		a.convID = a.nextConv
+		a.convs = append(a.convs, conversation{ID: a.convID, Title: truncTitle(text)})
+	}
 	a.nextID++
-	a.msgs = append(a.msgs, &uiMsg{id: "u" + strconv.Itoa(a.nextID), role: chat.MessageUser, text: text, done: true})
+	userMsg := &uiMsg{id: "u" + strconv.Itoa(a.nextID), role: chat.MessageUser, text: text, done: true}
+	if a.attachData != "" {
+		userMsg.dataURL = a.attachData
+		userMsg.bitmap = a.attachBitmap
+	}
+	a.msgsOf[a.convID] = append(a.msgsOf[a.convID], userMsg)
+	a.clearAttachment()
 	a.nextID++
-	reply := &uiMsg{id: "a" + strconv.Itoa(a.nextID), role: chat.MessageAssistant, open: true, started: time.Now()}
-	a.msgs = append(a.msgs, reply)
+	reply := &uiMsg{id: "a" + strconv.Itoa(a.nextID), role: chat.MessageAssistant, open: true, started: time.Now(), step: "思考中"}
+	a.msgsOf[a.convID] = append(a.msgsOf[a.convID], reply)
 	a.input = ""
 
-	if a.win == nil { // headless：同步给出确定性的占位回复
-		reply.text = "（离线演示）这里会流式显示模型输出的数学元素提取结果。"
-		reply.ggb = "A = (1, 2)\nB = (4, 6)\nf(x) = sin(x)"
-		reply.html = "<!DOCTYPE html><html><head></head><body>demo</body></html>"
+	if a.win == nil { // headless：同步落定，保证截图确定性
+		reply.text = "好的，这道题的作图指令如下：\n\n```ggb\nf(x) = x^2\n```"
 		reply.done = true
+		a.applyGGBFences(reply)
+		a.saveAll()
 		return
 	}
 	go a.streamChat(text, reply)
 }
 
 func (a *app) streaming() bool {
-	return len(a.msgs) > 0 && !a.msgs[len(a.msgs)-1].done
+	msgs := a.currentMsgs()
+	return len(msgs) > 0 && !msgs[len(msgs)-1].done
 }
 
-// streamChat 确保会话存在、发起 SSE 请求并把事件应用到 reply 上。
-func (a *app) streamChat(text string, reply *uiMsg) {
-	if a.convID == 0 {
-		id, err := a.api.CreateConversation(a.s.Token, truncTitle(text))
-		if err != nil {
-			a.fail(reply, "创建会话失败："+err.Error())
-			return
+// buildMessages 把当前会话整理成 OpenAI 消息数组（系统提示 + 截断后的历史 + 带图消息）。
+func (a *app) buildMessages(userText, imageDataURL string) []OAMessage {
+	var out []OAMessage
+	if a.s.SystemPrompt != "" {
+		out = append(out, textMessage("system", a.s.SystemPrompt))
+	}
+	msgs := a.currentMsgs()
+	// 去掉刚 append 的用户消息与占位回复，从历史正文构建
+	history := msgs
+	if len(history) > 2 {
+		history = history[:len(history)-2]
+	}
+	if len(history) > 20 {
+		history = history[len(history)-20:]
+	}
+	for _, m := range history {
+		if m.errText != "" || m.text == "" {
+			continue
 		}
-		a.convID = id
+		if m.role == chat.MessageUser {
+			out = append(out, textMessage("user", m.text))
+		} else {
+			out = append(out, textMessage("assistant", m.text))
+		}
+	}
+	if imageDataURL != "" {
+		out = append(out, OAMessage{Role: "user", Content: []OAContentPart{
+			{Type: "text", Text: userText},
+			{Type: "image_url", ImageURL: &OAImageURL{URL: imageDataURL}},
+		}})
+	} else {
+		out = append(out, textMessage("user", userText))
+	}
+	return out
+}
+
+// streamChat 发起流式请求并把增量应用到占位回复上。
+func (a *app) streamChat(userText string, reply *uiMsg) {
+	history := a.buildMessages(userText, a.replyDataImage(reply))
+	apply := func(ev OAEvent) {
 		a.win.Update(func() {
-			a.convs = append([]conversation{{ID: id, Title: truncTitle(text), UpdatedAt: time.Now()}}, a.convs...)
-			a.convSel.Selected = fmt.Sprintf("%d", id)
+			if ev.Reasoning != "" {
+				reply.thinking += ev.Reasoning
+			}
+			if ev.Content != "" {
+				reply.text += ev.Content
+				reply.step = ""
+				a.applyGGBFences(reply) // 围栏一到就画板
+			}
 		})
 	}
-	sessionID := a.convID
-	apply := func(ev SSEEvent) {
-		a.win.Update(func() { a.applyEvent(reply, ev) })
-	}
-	if err := a.api.Chat(a.s.Token, sessionID, text, apply); err != nil {
-		a.win.Update(func() { a.fail(reply, err.Error()) })
+	if err := a.api.Chat(a.s.Model, history, apply); err != nil {
+		a.win.Update(func() {
+			reply.errText = err.Error()
+			reply.done = true
+			a.saveAll()
+		})
 		return
 	}
-	a.win.Update(func() { reply.done = true })
+	a.win.Update(func() {
+		reply.done = true
+		a.applyGGBFences(reply)
+		a.applyHTMLFence(reply)
+		a.saveAll()
+	})
+}
+
+// replyDataImage 取占位回复对应的那条用户消息里的图片（倒数第二条）。
+func (a *app) replyDataImage(reply *uiMsg) string {
+	msgs := a.currentMsgs()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i] == reply {
+			if i > 0 && msgs[i-1].role == chat.MessageUser {
+				return msgs[i-1].dataURL
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// applyGGBFences 抽取回复里的 ```ggb 围栏，配置开启时推给画板。
+func (a *app) applyGGBFences(reply *uiMsg) {
+	cmds := extractGGBBlocks(reply.text)
+	if len(cmds) == 0 {
+		return
+	}
+	reply.ggb = strings.Join(cmds, "\n")
+	if a.s.AutoBoard && a.ggbView != nil {
+		a.sendToBoard(false, "", reply.ggb)
+	} else if a.s.AutoBoard {
+		a.boardApplied = len(cmds)
+	}
+}
+
+// applyHTMLFence 抽取回复里的 ```html 围栏（整页 GeoGebra HTML 时出现），
+// 存到消息上供「在浏览器打开」使用。
+func (a *app) applyHTMLFence(reply *uiMsg) {
+	blocks := extractFenced(reply.text, "html")
+	if len(blocks) > 0 {
+		reply.html = blocks[len(blocks)-1]
+	}
 }
 
 func (a *app) fail(reply *uiMsg, msg string) {
@@ -223,37 +367,76 @@ func (a *app) fail(reply *uiMsg, msg string) {
 	reply.done = true
 }
 
-// applyEvent 把一个 SSE 事件合并进占位回复。
-func (a *app) applyEvent(reply *uiMsg, ev SSEEvent) {
-	if reply.done {
+// ---- 画板 ----
+
+// sendToBoard 把一批指令发到画板；headless 下只记录状态供截图。
+func (a *app) sendToBoard(reset bool, perspective, text string) {
+	commands := splitCommands(text)
+	if len(commands) == 0 && !reset && perspective == "" {
 		return
 	}
-	switch ev.Type {
-	case "reasoning":
-		reply.thinking += ev.Content
-		reply.step = stepLabel(ev.Step)
-	case "element":
-		reply.text += ev.Content
-		reply.step = stepLabel(ev.Step)
-	case "ggb_commands":
-		reply.ggb = ev.Content
-		reply.step = stepLabel(ev.Step)
-		// 指令一到就推给画板，不等整条回复结束
-		a.sendToBoard(false, "", ev.Content)
-	case "html_code":
-		reply.html = ev.Content
-		reply.step = stepLabel(ev.Step)
-	case "failed_text", "error":
-		reply.errText = firstNonEmpty(ev.Content, "处理失败，请换个问题试试")
-		reply.done = true
+	a.boardSeq++
+	msg := boardMsg{ID: "b" + strconv.Itoa(a.boardSeq), Perspective: perspective, Reset: reset, Commands: commands}
+	a.boardBusy = a.ggbView != nil
+	a.boardErrors = nil
+	if a.ggbView == nil {
+		a.boardApplied = len(commands) // headless：假装全部成功，保证测试确定性
+		return
 	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	ggbCmdsEvent.Broadcast(string(payload))
 }
+
+// ---- 工具 ----
 
 func firstNonEmpty(a, b string) string {
 	if a != "" {
 		return a
 	}
 	return b
+}
+
+var _ = firstNonEmpty
+
+// extractFenced 抽取指定语言的围栏代码块内容。
+func extractFenced(text, lang string) []string {
+	var out []string
+	lines := strings.Split(text, "\n")
+	in := false
+	var cur []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !in {
+			if strings.HasPrefix(lower, "```"+lang) {
+				in = true
+				cur = nil
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") {
+			in = false
+			out = append(out, strings.Join(cur, "\n"))
+			continue
+		}
+		cur = append(cur, line)
+	}
+	return out
+}
+
+func splitCommands(text string) []string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // openArtifact 把生成的 HTML 存到临时目录并用系统浏览器打开。

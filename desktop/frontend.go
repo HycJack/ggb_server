@@ -10,7 +10,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -73,44 +72,7 @@ func inferPerspective(commands []string) string {
 	return ""
 }
 
-// splitCommands 把一段多行指令文本拆成逐条指令，去掉空行与注释。
-func splitCommands(text string) []string {
-	var out []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-// sendToBoard 把一批指令发到画板；headless 下只记录状态供截图。
-func (a *app) sendToBoard(reset bool, perspective, text string) {
-	commands := splitCommands(text)
-	if len(commands) == 0 && !reset && perspective == "" {
-		return
-	}
-	a.boardSeq++
-	msg := boardMsg{ID: "b" + itoa(a.boardSeq), Perspective: perspective, Reset: reset, Commands: commands}
-	a.boardBusy = a.ggbView != nil
-	a.boardErrors = nil
-	if a.ggbView == nil {
-		a.boardApplied = len(commands) // headless：假装全部成功，保证测试确定性
-		return
-	}
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-	ggbCmdsEvent.Broadcast(string(payload))
-}
-
-// ---- 前端资源服务 ----
-
-// frontendFS 返回 SetFrontend 用的文件系统：嵌入的页面优先，
-// 本地 vendor/GeoGebra 存在时叠加进 /web/vendor/** 路径。
+// inferPerspective 猜测这批指令需要的视角；判不了就留在当前视角（空串）。
 func frontendFS() fs.FS {
 	if root := geogebraRoot(); root != "" {
 		return unionFS{primary: webFS, fallback: os.DirFS(root), prefix: "web/"}

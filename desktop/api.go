@@ -1,4 +1,4 @@
-// Package main 的 API 客户端：ggb_server 的登录、会话与 SSE 聊天接口。
+// 原生 OpenAI 格式的聊天客户端：POST {base}/chat/completions，SSE 流式。
 package main
 
 import (
@@ -12,197 +12,71 @@ import (
 	"time"
 )
 
-// Client 调用 ggb_server 的 HTTP API；所有方法可在任意 goroutine 调用。
-type Client struct {
-	base string
+// OpenAIClient 调用任意 OpenAI 兼容端点；可在任意 goroutine 使用。
+type OpenAIClient struct {
+	base string // 形如 https://api.deepseek.com/v1
+	key  string
 	http *http.Client
 }
 
-func NewClient(baseURL string) *Client {
-	return &Client{
-		base: strings.TrimRight(baseURL, "/"),
-		http: &http.Client{Timeout: 5 * time.Minute},
+// NewOpenAIClient 归一化 base：去尾斜杠；不含 /v1 时补上（大多数兼容端点的约定）。
+func NewOpenAIClient(base, key string) *OpenAIClient {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base != "" && !strings.Contains(base, "/v1") {
+		base += "/v1"
+	}
+	return &OpenAIClient{
+		base: base,
+		key:  key,
+		http: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
-// ---- 协议类型（与服务端的 JSON 标签对应） ----
-
-type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+// OAContentPart 是多模态消息的内容片段（纯文本或图片）。
+type OAContentPart struct {
+	Type     string      `json:"type"` // "text" | "image_url"
+	Text     string      `json:"text,omitempty"`
+	ImageURL *OAImageURL `json:"image_url,omitempty"`
 }
 
-type loginResponse struct {
-	AccessToken string        `json:"access_token"`
-	User        loginUserInfo `json:"user"`
-	Error       string        `json:"error"`
+type OAImageURL struct {
+	URL string `json:"url"` // http(s) 或 data:image/png;base64,...
 }
 
-type loginUserInfo struct {
-	ID               uint   `json:"id"`
-	UserId           string `json:"userId"`
-	Username         string `json:"username"`
-	FreeMessageCount int    `json:"freeMessageCount"`
+// OAMessage 是一条对话消息；Content 为字符串（纯文本）或 []OAContentPart（带图）。
+type OAMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
 }
 
-type conversation struct {
-	ID        uint      `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+func textMessage(role, text string) OAMessage {
+	return OAMessage{Role: role, Content: text}
 }
 
-type conversationsResponse struct {
-	Total         int            `json:"total"`
-	Conversations []conversation `json:"conversations"`
+// OAEvent 是流式回复的一个增量。
+type OAEvent struct {
+	Content   string // 正文增量
+	Reasoning string // 思考增量（reasoning_content，DeepSeek 等提供）
 }
 
-type histAiMessage struct {
-	Message   string `json:"message"`
-	ModelName string `json:"modelName"`
-	Stage     int    `json:"stage"`
-	IsReason  bool   `json:"isReason"`
-}
-
-type histResource struct {
-	URL string `json:"url"`
-}
-
-type histMessage struct {
-	ID         uint            `json:"id"`
-	Message    string          `json:"message"`
-	UserID     string          `json:"userId"`
-	Identity   int             `json:"identity"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	AiMessages []histAiMessage `json:"aiMessage"`
-	Resources  []histResource  `json:"resource"`
-}
-
-type historyResponse struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
-	Data    struct {
-		Message []histMessage `json:"message"`
-	} `json:"data"`
-}
-
-// SSEEvent 是服务端 SSE data 行里 {"data":{...}} 的内层对象。
-type SSEEvent struct {
-	Type    string `json:"type"` // reasoning | element | ggb_commands | html_code | error | failed_text
-	Step    string `json:"step"` // classify | 2DExtract | 2DGenerateGGB | 2DGenerateHTML ...
-	Content string `json:"content"`
-}
-
-// ---- 接口 ----
-
-func (c *Client) do(method, path, token string, body, out any) error {
-	var reader io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(buf)
-	}
-	req, err := http.NewRequest(method, c.base+path, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(data)))
-	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(data, out)
-}
-
-// Login 登录并返回 token 与用户信息。
-func (c *Client) Login(username, password string) (string, loginUserInfo, error) {
-	var out loginResponse
-	if err := c.do(http.MethodPost, "/api/login", "", loginRequest{username, password}, &out); err != nil {
-		return "", loginUserInfo{}, err
-	}
-	if out.AccessToken == "" {
-		if out.Error != "" {
-			return "", loginUserInfo{}, fmt.Errorf("%s", out.Error)
-		}
-		return "", loginUserInfo{}, fmt.Errorf("登录失败：响应中没有 token")
-	}
-	return out.AccessToken, out.User, nil
-}
-
-// Conversations 拉取会话列表。
-func (c *Client) Conversations(token string) ([]conversation, error) {
-	var out conversationsResponse
-	if err := c.do(http.MethodGet, "/api/conversations?page=1&pageSize=100", token, nil, &out); err != nil {
-		return nil, err
-	}
-	return out.Conversations, nil
-}
-
-// CreateConversation 新建会话，返回新会话 ID。
-func (c *Client) CreateConversation(token, title string) (uint, error) {
-	var out struct {
-		ID uint `json:"id"`
-	}
-	if err := c.do(http.MethodPost, "/api/conversations", token, map[string]string{"title": title}, &out); err != nil {
-		return 0, err
-	}
-	return out.ID, nil
-}
-
-// DeleteConversation 删除会话。
-func (c *Client) DeleteConversation(token string, id uint) error {
-	return c.do(http.MethodDelete, fmt.Sprintf("/api/conversations/%d", id), token, nil, nil)
-}
-
-// History 拉取一个会话的完整消息历史。
-func (c *Client) History(token string, id uint) ([]histMessage, error) {
-	var out historyResponse
-	if err := c.do(http.MethodGet, fmt.Sprintf("/api/conversations/%d", id), token, nil, &out); err != nil {
-		return nil, err
-	}
-	if !out.Success {
-		if out.Error != "" {
-			return nil, fmt.Errorf("%s", out.Error)
-		}
-		return nil, fmt.Errorf("获取历史失败")
-	}
-	return out.Data.Message, nil
-}
-
-// Chat 发起一条消息并流式读取 SSE 事件；每个事件通过 onEvent 回调交付。
-func (c *Client) Chat(token string, sessionID uint, message string, onEvent func(SSEEvent)) error {
+// Chat 流式发起一次对话补全；每个增量经 onEvent 交付。
+func (c *OpenAIClient) Chat(model string, messages []OAMessage, onEvent func(OAEvent)) error {
 	body, err := json.Marshal(map[string]any{
-		"message":   message,
-		"sessionId": sessionID,
-		"parentId":  0,
+		"model":    model,
+		"messages": messages,
+		"stream":   true,
 	})
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, c.base+"/api/v2/chat", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, c.base+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -215,23 +89,92 @@ func (c *Client) Chat(token string, sessionID uint, message string, onEvent func
 	}
 
 	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // html_code 事件是一条超长行
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "" || payload == "[DONE]" {
 			continue
 		}
-		var wrapper struct {
-			Data SSEEvent `json:"data"`
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					Reasoning string `json:"reasoning_content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
 		}
-		if err := json.Unmarshal([]byte(payload), &wrapper); err != nil {
-			continue // 无法解析的心跳/杂项行直接跳过
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
 		}
-		onEvent(wrapper.Data)
+		if chunk.Error != nil {
+			return fmt.Errorf("%s", chunk.Error.Message)
+		}
+		if len(chunk.Choices) > 0 {
+			d := chunk.Choices[0].Delta
+			if d.Content != "" || d.Reasoning != "" {
+				onEvent(OAEvent{Content: d.Content, Reasoning: d.Reasoning})
+			}
+		}
 	}
 	return sc.Err()
+}
+
+// Models 拉取 /models 列表，供设置页校验连通性（失败不阻塞保存）。
+func (c *OpenAIClient) Models() ([]string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.base+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(out.Data))
+	for _, m := range out.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
+// extractGGBBlocks 从 markdown 文本中抽取 ```ggb / ```geogebra 围栏里的指令。
+func extractGGBBlocks(text string) []string {
+	var out []string
+	blocks := extractFenced(text, "ggb")
+	blocks = append(blocks, extractFenced(text, "geogebra")...)
+	for _, block := range blocks {
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+				continue
+			}
+			out = append(out, line)
+		}
+	}
+	return out
 }

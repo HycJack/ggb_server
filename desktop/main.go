@@ -28,9 +28,6 @@ func main() {
 		} else {
 			log.Println("geogebra webview:", err)
 		}
-		if a.logged {
-			a.refreshConversations()
-		}
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

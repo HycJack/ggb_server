@@ -44,18 +44,27 @@ type OAImageURL struct {
 }
 
 // OAToolCall 是模型请求的一次工具调用。
+// 注意 function 必须是嵌套对象：{"id","type":"function","function":{"name","arguments"}}
+// 摊平成同级字段会被严格网关判为 invalid tool_call。
 type OAToolCall struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Args string `json:"arguments"` // JSON 字符串
+	ID       string     `json:"id"`
+	Type     string     `json:"type"` // 固定 "function"
+	Function OAToolFunc `json:"function"`
+}
+
+// OAToolFunc 是工具调用的函数名与参数。
+type OAToolFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON 字符串
 }
 
 // OAMessage 是一条对话消息；Content 为字符串（纯文本）或 []OAContentPart（带图）。
 type OAMessage struct {
 	Role       string       `json:"role"`
-	Content    any          `json:"content"`
+	Content    any          `json:"content"`                // 纯文本时是 string；只带工具调用时必须是 null
 	ToolCalls  []OAToolCall `json:"tool_calls,omitempty"`   // role=assistant 请求的工具调用
 	ToolCallID string       `json:"tool_call_id,omitempty"` // role=tool 的对应 ID
+	Name       string       `json:"name,omitempty"`         // role=tool 的工具名
 }
 
 func textMessage(role, text string) OAMessage {
@@ -227,9 +236,23 @@ func (c *OpenAIClient) chat(model string, messages []OAMessage, tools []map[stri
 		return result, err
 	}
 	for i := 0; i < len(toolAcc); i++ {
-		if acc := toolAcc[i]; acc != nil {
-			result.ToolCalls = append(result.ToolCalls, OAToolCall{ID: acc.id, Name: acc.name, Args: string(acc.args)})
+		acc := toolAcc[i]
+		if acc == nil {
+			continue
 		}
+		id := acc.id
+		if id == "" { // 有些网关不在流里给 id，补一个占位
+			id = fmt.Sprintf("call_%d", i)
+		}
+		args := strings.TrimSpace(string(acc.args))
+		if args == "" {
+			args = "{}"
+		}
+		result.ToolCalls = append(result.ToolCalls, OAToolCall{
+			ID:       id,
+			Type:     "function",
+			Function: OAToolFunc{Name: acc.name, Arguments: args},
+		})
 	}
 	return result, nil
 }

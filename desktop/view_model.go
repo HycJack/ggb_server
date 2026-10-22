@@ -373,10 +373,15 @@ func (a *app) streamChat(userText string, reply *uiMsg) {
 			reply.usedTools = true
 			reply.step = "正在操作画板…"
 		})
-		messages = append(messages, OAMessage{Role: "assistant", Content: res.Content, ToolCalls: res.ToolCalls})
+		// 只带工具调用时 content 必须是 null（空串会被严格网关判为 invalid tool_call）
+		var assistantContent any
+		if res.Content != "" {
+			assistantContent = res.Content
+		}
+		messages = append(messages, OAMessage{Role: "assistant", Content: assistantContent, ToolCalls: res.ToolCalls})
 		for _, tc := range res.ToolCalls {
 			result := a.execTool(tc)
-			messages = append(messages, OAMessage{Role: "tool", ToolCallID: tc.ID, Content: result})
+			messages = append(messages, OAMessage{Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name, Content: result})
 		}
 	}
 
@@ -396,8 +401,8 @@ func (a *app) execTool(call OAToolCall) string {
 		Commands    []string `json:"commands"`
 		Perspective string   `json:"perspective"`
 	}
-	_ = json.Unmarshal([]byte(call.Args), &args)
-	switch call.Name {
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+	switch call.Function.Name {
 	case "geogebra_run":
 		r := a.boardCall(boardMsg{Op: "run", Perspective: args.Perspective, Commands: args.Commands}, 30*time.Second)
 		if r.note != "" {
@@ -431,7 +436,7 @@ func (a *app) execTool(call OAToolCall) string {
 		out, _ := json.Marshal(map[string]any{"saved": path})
 		return string(out)
 	default:
-		return `{"error":"unknown tool ` + call.Name + `"}`
+		return `{"error":"unknown tool ` + call.Function.Name + `"}`
 	}
 }
 

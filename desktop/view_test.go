@@ -10,8 +10,8 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// screenshot 渲染一帧状态并写入 PNG，返回文件路径。
-func screenshot(t *testing.T, name string, a *app) string {
+// screenshot 渲染一帧状态并写入 PNG，返回 tester（供断言）与文件路径。
+func screenshot(t *testing.T, name string, a *app) (*ui.Tester, string) {
 	t.Helper()
 	tester := ui.NewTester(func(c *ui.Context) { a.view(c) }, 1180, 740)
 	tester.SetScale(1)
@@ -29,7 +29,7 @@ func screenshot(t *testing.T, name string, a *app) string {
 	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return tester, p
 }
 
 func demoApp() *app {
@@ -62,13 +62,18 @@ func demoThread() []*uiMsg {
 
 func TestScreenshotLogin(t *testing.T) {
 	a := newApp()
-	p := screenshot(t, "login", a)
+	_, p := screenshot(t, "login", a)
 	t.Log("written", p)
 }
 
 func TestScreenshotWelcome(t *testing.T) {
 	a := demoApp()
-	p := screenshot(t, "welcome", a)
+	a.convID = 0 // 走欢迎页分支（未选会话）
+	a.convSel.Selected = ""
+	tester, p := screenshot(t, "welcome", a)
+	if !tester.HasText("画一道数学题") {
+		t.Errorf("welcome greeting missing in %q", tester.Texts())
+	}
 	t.Log("written", p)
 }
 
@@ -76,7 +81,7 @@ func TestScreenshotConversation(t *testing.T) {
 	a := demoApp()
 	a.msgs = demoThread()
 	a.boardApplied = 3 // 画板占位里的“最近一批指令”
-	p := screenshot(t, "conversation", a)
+	_, p := screenshot(t, "conversation", a)
 	t.Log("written", p)
 }
 
@@ -92,6 +97,6 @@ func TestScreenshotStreaming(t *testing.T) {
 		open:     true,
 		started:  time.Now(),
 	})
-	p := screenshot(t, "streaming", a)
+	_, p := screenshot(t, "streaming", a)
 	t.Log("written", p)
 }

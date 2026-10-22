@@ -214,10 +214,10 @@ func (a *app) welcome(c *ui.Context) {
 		Greeting: "画一道数学题",
 		Subtitle: "输入题目，自动识别类型、提取元素、生成 GeoGebra 指令与交互页面",
 		Cards: []chat.CapabilityCard{
-			{Title: "平面几何", Description: "三角形、圆与轨迹", Icon: icons.Must("triangle")},
-			{Title: "立体几何", Description: "空间图形与截面", Icon: icons.Must("box")},
-			{Title: "函数图像", Description: "多项式、三角与圆锥曲线", Icon: icons.Must("sigma")},
-			{Title: "尺规作图", Description: "用指令精确作图", Icon: icons.Must("compass")},
+			{Title: "平面几何", Description: "三角形、圆与轨迹", Icon: icons.Must("square")},
+			{Title: "立体几何", Description: "空间图形与截面", Icon: icons.Must("archive")},
+			{Title: "函数图像", Description: "多项式、三角与圆锥曲线", Icon: icons.Must("layout-grid")},
+			{Title: "尺规作图", Description: "用指令精确作图", Icon: icons.Must("pencil")},
 		},
 	})
 	if w.Example != "" {

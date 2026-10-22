@@ -24,6 +24,10 @@ type conversation struct {
 	UpdatedAt time.Time
 }
 
+// legacySystemPrompt 是第一版默认提示词；升级时自动替换为新默认。
+const legacySystemPrompt = "你是数学画图助手。涉及几何/函数作图时，先把思路讲清楚，" +
+	"再把 GeoGebra 指令逐行放进 ```ggb 围栏代码块中（例如：\n```ggb\nf(x) = x^2\n```\n）。"
+
 // settings 是落盘的配置：OpenAI 兼容端点与画板行为。
 type settings struct {
 	APIBase      string `json:"apiBase"`
@@ -41,13 +45,17 @@ func settingsPath() (string, error) {
 	return filepath.Join(dir, "ggb-desktop", "settings.json"), nil
 }
 
+// DefaultSystemPrompt 明确告诉模型：它有一块实时 GeoGebra 画板，
+// 把指令写进 ```ggb 围栏应用就会自动执行——没有这句，模型常以
+// "我无法操作 GeoGebra" 拒绝作图。
+const DefaultSystemPrompt = "你是一个内嵌在桌面应用里的数学画图助手，应用自带一块实时 GeoGebra 画板，你完全可以操作它：把 GeoGebra 指令逐行写进 ```ggb 围栏代码块，应用会自动逐条在画板上执行，用户看不到纯文字的图，只看得到画板上的结果。作图规范：每行一条指令；先创建对象再引用，常用写法如 A=(1,2)、Segment(A,B)、Circle(A,2)、Polygon(A,B,C)、f(x)=sin(x)、Intersect(f,g)；需要立体图形时直接用 3D 指令（Sphere、Cube、Pyramid、Prism 等），画板会自动切到 3D 视角；可用 ShowLabel / SetColor / SetCaption 控制标注与样式。回答结构：先用一两句话讲思路，然后给出指令围栏，最后总结画了什么。如果用户没给完整条件，按最常见的方式补全并说明。"
+
 func defaultSettings() settings {
 	return settings{
-		APIBase:   "https://api.deepseek.com",
-		Model:     "deepseek-chat",
-		AutoBoard: true,
-		SystemPrompt: "你是数学画图助手。涉及几何/函数作图时，先把思路讲清楚，" +
-			"再把 GeoGebra 指令逐行放进 ```ggb 围栏代码块中（例如：\n```ggb\nf(x) = x^2\n```\n）。",
+		APIBase:      "https://api.deepseek.com",
+		Model:        "deepseek-chat",
+		AutoBoard:    true,
+		SystemPrompt: DefaultSystemPrompt,
 	}
 }
 
@@ -56,9 +64,9 @@ func loadSettings() settings {
 	if p, err := settingsPath(); err == nil {
 		if data, err := os.ReadFile(p); err == nil {
 			json.Unmarshal(data, &s)
-			if s.SystemPrompt == "" {
-				// 旧版本的设置文件没有这个字段；用户清空提示词的情况极少，回填默认更稳
-				s.SystemPrompt = defaultSettings().SystemPrompt
+			// 旧版本文件没有 systemPrompt 字段，或存的是旧版弱提示词：都升级到新默认
+			if s.SystemPrompt == "" || s.SystemPrompt == legacySystemPrompt {
+				s.SystemPrompt = DefaultSystemPrompt
 			}
 		}
 	}

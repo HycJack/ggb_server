@@ -24,6 +24,9 @@ func Test_RootPath(t *testing.T) {
 }
 
 func Test_StepFuncWithBase64Image(t *testing.T) {
+	if consts.StepFunApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 	rootPath, _ := utils.FindRootPath()
 	filePath := filepath.Join(rootPath, "static/upload/1752091241079782000.png")
 	file, _ := os.Open(filePath)
@@ -92,6 +95,10 @@ func Test_StepFuncWithBase64Image(t *testing.T) {
 	chatCompletionReq.Header.Set("Content-Type", "application/json")
 	chatCompletionReq.Header.Set("Authorization", "Bearer "+consts.StepFunApiKey)
 	resp, err := client.Do(chatCompletionReq)
+	if err != nil {
+		log.Println("Do err:", err)
+		return
+	}
 	defer resp.Body.Close()
 
 	reader, _ := io.ReadAll(resp.Body)
@@ -105,6 +112,9 @@ func Test_StepFuncWithBase64Image(t *testing.T) {
 }
 
 func Test_StepFunWithImageUrl(t *testing.T) {
+	if consts.StepFunApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 	contents := schema.UserMessageContent{
 		schema.TextType{
 			Type: "text",
@@ -164,6 +174,10 @@ func Test_StepFunWithImageUrl(t *testing.T) {
 	chatCompletionReq.Header.Set("Content-Type", "application/json")
 	chatCompletionReq.Header.Set("Authorization", "Bearer "+consts.StepFunApiKey)
 	resp, err := client.Do(chatCompletionReq)
+	if err != nil {
+		log.Println("Do err:", err)
+		return
+	}
 	defer resp.Body.Close()
 
 	reader, _ := io.ReadAll(resp.Body)

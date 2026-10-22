@@ -2,4 +2,7 @@
 .idea/
 .vscode/
 logs/
-static/
+static/upload/
+var.env
+cmd/main
+*.test

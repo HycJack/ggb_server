@@ -7,38 +7,45 @@ import (
 	"ggb_server/internal/repository"
 	"ggb_server/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
 var whiteList = map[string]bool{
-	"/health" : true,
+	"/health":       true,
 	"/api/register": true,
 	"/api/login":    true,
 	"/static":       true,
 }
 
+var (
+	urlPrefixOnce sync.Once
+)
+
 func SetHost() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if consts.URLPrefix != "" {
-			c.Next()
-		}
-		protocol := "http"
-		if c.Request.TLS != nil {
-			protocol = "https"
-		}
-		consts.URLPrefix = protocol + "://" + c.Request.Host
+		// URLPrefix 是全局只应写一次的值：并发请求下用 Once 保证只初始化一次
+		urlPrefixOnce.Do(func() {
+			protocol := "http"
+			if c.Request.TLS != nil {
+				protocol = "https"
+			}
+			consts.URLPrefix = protocol + "://" + c.Request.Host
+		})
+		c.Next()
 	}
 }
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		// 通配 origin 与 Allow-Credentials 不能同时使用；本服务用 Authorization 头而非 Cookie
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
@@ -80,12 +87,6 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		claims, err := utils.ParseToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "Invalid or expired token: " + err.Error()})
-			c.Abort()
-			return
-		}
-
-		if claims.ExpiresAt < time.Now().Unix() {
-			c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "Expired token"})
 			c.Abort()
 			return
 		}
@@ -162,5 +163,5 @@ func Logger() gin.HandlerFunc {
 }
 
 func generateRequestID() string {
-	return "req_" + time.Now().Format("20060102150405")
+	return "req_" + uuid.NewString()
 }

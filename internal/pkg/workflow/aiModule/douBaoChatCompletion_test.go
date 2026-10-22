@@ -9,6 +9,9 @@ import (
 )
 
 func Test_DouBao(t *testing.T) {
+	if consts.DouBaoApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 
 	client := NewChatCompletionClient[*DouBaoChatCompletion](
 		map[string]string{
@@ -27,6 +30,9 @@ func Test_DouBao(t *testing.T) {
 }
 
 func Test_DouBaoStream(t *testing.T) {
+	if consts.DouBaoApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 
 	client := NewChatCompletionClient[*DouBaoChatCompletion](
 		map[string]string{

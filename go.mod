@@ -5,8 +5,8 @@ go 1.23.0
 toolchain go1.23.9
 
 require (
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gin-gonic/gin v1.10.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.3.0
 	github.com/spf13/viper v1.17.0
 	github.com/volcengine/volcengine-go-sdk v1.1.22

@@ -93,7 +93,7 @@ func (g ChatCompletionClient) ChatCompletion() (Content, error) {
 	if len(response.Choices) > 0 {
 		content := response.Choices[0].Message.Content
 		if (g.ProcessStep == consts.TwoDGenerateHTML) || (g.ProcessStep == consts.ThreeDGenerateHTML) || (g.ProcessStep == consts.FunctionGenerateHTML) || (g.ProcessStep == consts.KnowledgeGenerateHTML) {
-			content = filterHTML(content)
+			content = FilterHTML(content)
 		}
 		formatContent := Content{
 			Type:    OutputContent,

@@ -2,12 +2,12 @@ package config
 
 import (
 	"fmt"
-	"ggb_server/internal/pkg/database"
 	"ggb_server/internal/utils"
 	"github.com/spf13/viper"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -71,11 +71,8 @@ var (
 func init() {
 	rootPath, _ := findRootPath()
 	loadConfig(rootPath)
-
-	err := database.InitDB(Cfg.Database.GetDSN())
-	if err != nil {
-		log.Panicf("init db err: %v, dsn: %v", err, Cfg.Database.GetDSN())
-	}
+	// 注意：这里只负责配置；数据库连接由 app.Start() 显式初始化，
+	// 否则任何 import 到 config 的包（含测试）都会在没有 MySQL 时 panic。
 }
 
 func LoadConfig() {
@@ -89,6 +86,21 @@ func loadConfig(dir string) {
 		viper.AddConfigPath(dir)
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
+
+		// 敏感项允许用环境变量覆盖，config.yml 里只放占位符
+		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		for _, key := range []string{
+			"db.password",
+			"jwt.secret",
+			"ai_model.deepseek.apiKey",
+			"ai_model.stepfun.apiKey",
+			"ai_model.doubao.apiKey",
+		} {
+			if err := viper.BindEnv(key); err != nil {
+				panic(fmt.Errorf("bind env for %s failed: %v\n", key, err))
+			}
+		}
+		viper.AutomaticEnv()
 
 		if err := viper.ReadInConfig(); err != nil {
 			panic(fmt.Errorf("read config file failed: %v\n", err))

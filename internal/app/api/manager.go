@@ -34,14 +34,14 @@ func AddPath(e *gin.Engine) {
 	r := e.Group("/api")
 	aiChatModule(r)
 	loginModule(r)
-	userModule(r)
 }
 
 func AddMiddleware(e *gin.Engine) {
+	// Recovery 必须最外层，保证所有中间件里的 panic 都能被兜住
+	e.Use(middleware.Recovery())
+	e.Use(middleware.Logger())
 	e.Use(middleware.SetHost())
 	e.Use(middleware.CORSMiddleware())
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recovery())
 	e.Use(middleware.DBMiddleware(database.GetDB()))
 	e.Use(middleware.JWTAuthMiddleware())
 }
@@ -65,11 +65,4 @@ func loginModule(r *gin.RouterGroup) {
 	r.POST("/verify-verification-code", LoginAPI.VerifyVerificationCode)
 	r.POST("/generate-invite-code", LoginAPI.GenerateInviteCode)
 
-}
-
-func userModule(r *gin.RouterGroup) {
-	r = r.Group("/user")
-	{
-
-	}
 }

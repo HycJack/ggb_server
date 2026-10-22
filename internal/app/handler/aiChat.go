@@ -17,10 +17,18 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type AiChat struct{}
+
+// 允许上传的图片扩展名白名单；上传目录由静态服务直接对外，放行 HTML 等会造成存储型 XSS
+var uploadExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+}
+
+const maxUploadSize = 10 << 20 // 10MB
 
 func (a AiChat) Upload(c *gin.Context) {
 	file, err := c.FormFile("file")
@@ -28,6 +36,19 @@ func (a AiChat) Upload(c *gin.Context) {
 		c.JSON(400, gin.H{
 			"message": err.Error(),
 		})
+		return
+	}
+	if !uploadExts[strings.ToLower(filepath.Ext(file.Filename))] {
+		c.JSON(400, gin.H{
+			"message": "only png/jpg/jpeg/gif/webp images are allowed",
+		})
+		return
+	}
+	if file.Size > maxUploadSize {
+		c.JSON(400, gin.H{
+			"message": "file too large, max 10MB",
+		})
+		return
 	}
 	fileExt := filepath.Ext(file.Filename)
 	newFileName := fmt.Sprintf("%d%s", time.Now().UnixNano(), fileExt)
@@ -37,6 +58,7 @@ func (a AiChat) Upload(c *gin.Context) {
 		c.JSON(500, gin.H{
 			"message": err.Error(),
 		})
+		return
 	}
 	c.JSON(200, gin.H{
 		"imageUrl": fmt.Sprintf("%s/%s/%s", consts.URLPrefix, config.Cfg.Static.Path, newFileName),
@@ -76,6 +98,7 @@ func (a AiChat) Chat(c *gin.Context) {
 		c.JSON(500, gin.H{
 			"error": err,
 		})
+		return
 	}
 
 	flusher := c.Writer.(http.Flusher)
@@ -184,7 +207,7 @@ func (a AiChat) GetConversations(c *gin.Context) {
 	}
 
 	// 获取总数
-	_, err = sessionRepo.CountByUserID(db, user.UserId)
+	total, err := sessionRepo.CountByUserID(db, user.UserId)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -193,20 +216,10 @@ func (a AiChat) GetConversations(c *gin.Context) {
 		return
 	}
 
-	// 转换为响应格式
-	//conversations := make([]schema.ConversationInfo, len(sessions))
-	//for i, session := range sessions {
-	//	conversations[i] = schema.ConversationInfo{
-	//		ID:        session.ID,
-	//		Title:     session.Title,
-	//		CreatedAt: session.CreatedAt.Format("2006-01-02 15:04:05"),
-	//		UpdatedAt: session.UpdatedAt.Format("2006-01-02 15:04:05"),
-	//	}
-	//}
-
 	c.JSON(http.StatusOK, gin.H{
 		"userId":        user.UserId,
 		"userPK":        user.ID,
+		"total":         total,
 		"conversations": sessions,
 	})
 }
@@ -231,11 +244,27 @@ func (a AiChat) GetConversation(c *gin.Context) {
 	}
 
 	db := GetDB(c)
+	user, err := GetUserFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
 	session, err := repository.NewSessionRepository[model.Session]().GetById(db, cId)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"success": false,
 			"error":   err.Error(),
+		})
+		return
+	}
+	// 越权防护：只能读取自己的会话
+	if session.UserID != user.UserId {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "无权限访问此对话",
 		})
 		return
 	}

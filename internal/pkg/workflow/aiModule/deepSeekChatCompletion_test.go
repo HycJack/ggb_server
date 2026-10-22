@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,9 @@ func Test_NewClinet(t *testing.T) {
 }
 
 func Test_Chat(t *testing.T) {
+	if consts.DeepSeekApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 	userContent := []schema.Content{
 		schema.Content{
 			Type: "text",
@@ -62,7 +66,7 @@ func Test_Chat(t *testing.T) {
 		"message":                      string(userContentBytes),
 		strings.ToLower("imgUrl"):      "http://106.52.162.78:8020/static/upload/1752302889160686111.jpg",
 		strings.ToLower("processStep"): string(consts.Classify),
-		strings.ToLower("contentType"): string(Classify),
+		strings.ToLower("contentType"): strconv.Itoa(Classify),
 	}
 	client := NewChatCompletionClient[*StepFunChatCompletion](mapping, nil, nil, nil)
 
@@ -76,6 +80,9 @@ func Test_Chat(t *testing.T) {
 }
 
 func Test_ChatCompletion(t *testing.T) {
+	if consts.DeepSeekApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 	client := NewChatCompletionClient[*ChatCompletionClient](map[string]string{
 		"model":                        string(consts.TencentDeepSeek),
 		"message":                      "你好 possible是什么意思",
@@ -90,6 +97,9 @@ func Test_ChatCompletion(t *testing.T) {
 }
 
 func Test_ChatCompletion2(t *testing.T) {
+	if consts.DeepSeekApiKey == "" {
+		t.Skip("no api key configured, skipping integration test")
+	}
 	chatCompletionReq := schema.DeepSeekRequest{
 		Model: string(consts.DeepSeekChat),
 		Messages: []schema.Message{

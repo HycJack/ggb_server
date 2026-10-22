@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -15,7 +16,7 @@ var (
 	once       sync.Once
 )
 
-func InitDB(dsn string) error {
+func InitDB(dsn string, maxIdleConns, maxOpenConns int) error {
 	var err error
 
 	once.Do(func() {
@@ -37,12 +38,17 @@ func InitDB(dsn string) error {
 			return
 		}
 
-		sqlDB, err := dbInstance.DB()
-		if err != nil {
+		sqlDB, dbErr := dbInstance.DB()
+		if dbErr != nil {
+			err = fmt.Errorf("get underlying sql.DB: %w", dbErr)
 			return
 		}
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
+		if maxIdleConns > 0 {
+			sqlDB.SetMaxIdleConns(maxIdleConns)
+		}
+		if maxOpenConns > 0 {
+			sqlDB.SetMaxOpenConns(maxOpenConns)
+		}
 		sqlDB.SetConnMaxLifetime(time.Hour)
 	})
 	log.Println("connected to database")

@@ -115,7 +115,7 @@ func (p *Process) GenerateHTML(command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filterHTML(res), nil
+	return aiModule.FilterHTML(res), nil
 }
 
 func (p *Process) doClassification() (string, map[string]string, error) {
@@ -239,17 +239,7 @@ func (p *Process) doExtract(classify map[string]string) (string, error) {
 			imgBase64 := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(fileContent))
 			imgUrl = imgBase64
 		}
-
-		//mapping["model"] = string(consts.StepFuncChat1oTurbo)
 		mapping[strings.ToLower("imgUrl")] = imgUrl
-		/*		client := aiModule.NewChatCompletionClient[*aiModule.StepFunChatCompletion](mapping, p.Flusher, p.W, p.userInfo)
-
-				res, err := client.ChatCompletionStream()
-				if err != nil {
-					log.Println("error occurred when extract: ", err)
-					return "", err
-				}
-				return res.Content, err*/
 	}
 
 	mapping[strings.ToLower("thinkingType")] = string(arkModel.ThinkingTypeEnabled)
@@ -337,35 +327,6 @@ func filterCommands(elements string) string {
 	contentStart := startIdx + len(startTag)
 	contentEnd := startIdx + endIdx
 	return elements[contentStart:contentEnd]
-}
-
-// filterHTML 从文本中提取完整的HTML代码
-func filterHTML(html string) string {
-	// 查找 <!DOCTYPE html> 的开始位置
-	doctypeStart := strings.Index(html, "<!DOCTYPE html>")
-	if doctypeStart == -1 {
-		// 如果没有 DOCTYPE，尝试查找 <html> 标签
-		htmlStart := strings.Index(html, "<html")
-		if htmlStart == -1 {
-			return html
-		}
-		doctypeStart = htmlStart
-	}
-
-	// 查找 </html> 的结束位置
-	endTag := "</html>"
-	endIdx := strings.Index(html[doctypeStart:], endTag)
-	if endIdx == -1 {
-		return html
-	}
-
-	// 计算结束位置
-	endPos := doctypeStart + endIdx + len(endTag)
-
-	// 提取完整的HTML文档
-	htmlDoc := html[doctypeStart:endPos]
-
-	return htmlDoc
 }
 
 func (p *Process) insertWorkFlow(rootId, parentId *uint, workflowType consts.WorkFlowType, input, output string, skip bool) (*model.Workflow, error) {

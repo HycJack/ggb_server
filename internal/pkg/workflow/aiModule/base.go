@@ -106,8 +106,8 @@ func writeSSEEvent(w io.Writer, flusher http.Flusher, data string) {
 	flusher.Flush()
 }
 
-// filterHTML 从文本中提取完整的HTML代码
-func filterHTML(html string) string {
+// FilterHTML 从文本中提取完整的HTML文档（DOCTYPE 或 <html> 起，</html> 止）
+func FilterHTML(html string) string {
 	// 查找 <!DOCTYPE html> 的开始位置
 	doctypeStart := strings.Index(html, "<!DOCTYPE html>")
 	if doctypeStart == -1 {

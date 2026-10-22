@@ -5,6 +5,7 @@ import (
 	"errors"
 	"ggb_server/internal/app/api"
 	"ggb_server/internal/config"
+	"ggb_server/internal/pkg/database"
 	"ggb_server/internal/pkg/glog"
 	"ggb_server/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -19,9 +20,30 @@ import (
 
 func Start() {
 	rootPath, _ := utils.FindRootPath()
-	glog.InitLogger(filepath.Join(rootPath, "logs/app.log"))
 
-	gin.SetMode(gin.DebugMode)
+	// JWT 必须在服务起来之前初始化，空密钥比无认证更危险
+	utils.InitJWTAuth(config.Cfg.JWT.Secret, config.Cfg.JWT.Expire)
+
+	if err := database.InitDB(config.Cfg.Database.GetDSN(), config.Cfg.Database.MaxIdleConns, config.Cfg.Database.MaxOpenConns); err != nil {
+		log.Fatalf("init db err: %v", err)
+	}
+
+	logPath := config.Cfg.Log.FilePath
+	if logPath == "" {
+		logPath = filepath.Join(rootPath, "logs/app.log")
+	} else if !filepath.IsAbs(logPath) {
+		logPath = filepath.Join(rootPath, logPath)
+	}
+	glog.InitLogger(logPath)
+
+	switch config.Cfg.Server.Mode {
+	case "prod":
+		gin.SetMode(gin.ReleaseMode)
+	case "test":
+		gin.SetMode(gin.TestMode)
+	default:
+		gin.SetMode(gin.DebugMode)
+	}
 
 	e := gin.New()
 	api.AddMiddleware(e)
@@ -30,7 +52,7 @@ func Start() {
 	srv := &http.Server{
 		Addr:              ":" + config.Cfg.Server.Port,
 		Handler:           e,
-		ReadHeaderTimeout: 30 * time.Minute,
+		ReadHeaderTimeout: 30 * time.Second, // 只管读完请求头；长响应由 WriteTimeout 保证
 		WriteTimeout:      30 * time.Minute,
 		IdleTimeout:       30 * time.Minute,
 	}

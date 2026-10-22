@@ -18,6 +18,7 @@ type JSON json.RawMessage
 func (j *JSON) Scan(value interface{}) error {
 	if value == nil {
 		*j = nil
+		return nil
 	}
 	s, ok := value.([]byte)
 	if !ok {

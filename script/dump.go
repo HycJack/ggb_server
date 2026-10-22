@@ -52,7 +52,7 @@ func init() {
 		d.Host,
 		d.Port,
 		d.Name)
-	err := database.InitDB(dsn)
+	err := database.InitDB(dsn, 10, 100)
 	if err != nil {
 		panic(err)
 	}

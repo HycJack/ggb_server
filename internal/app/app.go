@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"ggb_server/internal/app/api"
+	"ggb_server/internal/app/model"
 	"ggb_server/internal/config"
 	"ggb_server/internal/pkg/database"
 	"ggb_server/internal/pkg/glog"
@@ -26,6 +27,13 @@ func Start() {
 
 	if err := database.InitDB(config.Cfg.Database.GetDSN(), config.Cfg.Database.MaxIdleConns, config.Cfg.Database.MaxOpenConns); err != nil {
 		log.Fatalf("init db err: %v", err)
+	}
+	// 建缺失的表（幂等）；已有库不受影响
+	if err := database.AutoMigrate(
+		&model.User{}, &model.Session{}, &model.Message{},
+		&model.AiMessage{}, &model.Resource{}, &model.Workflow{},
+	); err != nil {
+		log.Fatalf("auto migrate: %v", err)
 	}
 
 	logPath := config.Cfg.Log.FilePath

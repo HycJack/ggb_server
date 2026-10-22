@@ -87,10 +87,14 @@ func loadConfig(dir string) {
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
 
-		// 敏感项允许用环境变量覆盖，config.yml 里只放占位符
+		// 敏感/环境相关项允许用环境变量覆盖，config.yml 里只放占位符
 		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 		for _, key := range []string{
+			"db.host",
+			"db.port",
+			"db.user",
 			"db.password",
+			"db.name",
 			"jwt.secret",
 			"ai_model.deepseek.apiKey",
 			"ai_model.stepfun.apiKey",

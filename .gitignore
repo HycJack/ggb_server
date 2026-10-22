@@ -6,3 +6,6 @@ static/upload/
 var.env
 cmd/main
 *.test
+desktop/web/vendor/
+desktop/build/
+desktop/ggb_desktop

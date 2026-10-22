@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoGebra 画板</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #fff; }
+  #applet { width: 100%; height: 100%; }
+  #status { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font: 13px system-ui, sans-serif; color: #6b6b74;
+    background: #fff; text-align: center; padding: 24px; }
+  #status[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="applet"></div>
+<div id="status">正在加载 GeoGebra…</div>
+<script>
+// GeoGebra 画板的嵌入页。架构参考 geogebra-dsh：优先加载本地 vendor 的完全离线
+// 构建（../../vendor/GeoGebra/），加载失败时回退到官方 CDN。
+// 与 Go 侧的桥接用 mygo 的事件与 IPC：
+//   Go → 页面: 事件 "ggb-cmds"，负载为 JSON 字符串
+//              { id, perspective?, reset?, commands: [] }
+//   页面 → Go: mygo.call("GGBBridge.Ready") / mygo.call("GGBBridge.Report", id, applied, errors)
+(function () {
+  var LOCAL_LOADER = 'vendor/GeoGebra/deployggb.js';
+  var LOCAL_CODEBASE = 'vendor/GeoGebra/HTML5/5.0/';
+  var CDN_LOADER = 'https://www.geogebra.org/apps/deployggb.js';
+
+  var status = document.getElementById('status');
+  var pending = [];
+  var applying = false;
+
+  function fail(message) {
+    status.hidden = false;
+    status.textContent = message;
+  }
+
+  function api() { return window.ggbApplet || null; }
+
+  function boot(codebase) {
+    if (!window.GGBApplet) { fail('GeoGebra 加载器未初始化'); return; }
+    var params = {
+      appName: 'classic',
+      width: window.innerWidth,
+      height: window.innerHeight,
+      // 与 geogebra-dsh 一致：把 applet 能展示的面板全部打开，
+      // 默认参数会让画板看起来像残缺版。
+      showToolBar: true,
+      showToolBarHelp: true,
+      showAlgebraInput: true,
+      showMenuBar: true,
+      perspective: '1',
+      allowStyleBar: true,
+      showResetIcon: true,
+      showZoomButtons: true,
+      showFullscreenButton: true,
+      showSuggestionButtons: true,
+      showAnimationButton: true,
+      enableLabelDrags: true,
+      enableShiftDragZoom: true,
+      enableRightClick: true,
+      enableUndoRedo: true,
+      language: 'zh-CN',
+      errorDialogsActive: false,
+      showLogging: false,
+      useBrowserForJS: false,
+      appletOnLoad: function (app) {
+        window.ggbApplet = app;
+        status.hidden = true;
+        mygo.call('GGBBridge.Ready');
+        flush();
+      }
+    };
+    if (codebase) params.codebase = codebase;
+    try {
+      new window.GGBApplet(params, true).inject('applet');
+    } catch (error) {
+      fail('GeoGebra 启动失败：' + (error && error.message ? error.message : error));
+    }
+  }
+
+  function loadScript(src, onload, onerror) {
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = onload;
+    s.onerror = onerror;
+    document.head.appendChild(s);
+  }
+
+  loadScript(LOCAL_LOADER, function () { boot(LOCAL_CODEBASE); }, function () {
+    // 本地 vendor 不在：回退 CDN（codebase 留空，deployggb 自带默认值）
+    loadScript(CDN_LOADER, function () { boot(null); }, function () {
+      fail('无法加载 GeoGebra：本地 vendor 缺失且 CDN 不可达');
+    });
+  });
+
+  window.addEventListener('resize', function () {
+    if (api()) api().setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---- 命令应用（参考 geogebra-dsh client.js 的批处理） ----
+  // evalCommand 对错误命令不抛异常、只返回 false，逐条检查并上报。
+
+  function applyOne(text) {
+    var app = api();
+    if (app.evalCommandGetLabels) {
+      var labels = app.evalCommandGetLabels(text);
+      return labels !== undefined && labels !== null && labels !== false;
+    }
+    return app.evalCommand(text) === true;
+  }
+
+  function flush() {
+    if (applying || !api() || pending.length === 0) return;
+    applying = true;
+    var msg = pending.shift();
+    try {
+      if (msg.reset) {
+        try { api().newConstruction(); } catch (e) { /* 空画板无需清理 */ }
+      }
+      if (msg.perspective) {
+        try { api().setPerspective(msg.perspective); } catch (e) { /* 保持原视角 */ }
+      }
+      var applied = 0, errors = [];
+      (msg.commands || []).forEach(function (cmd) {
+        var ok = false;
+        try { ok = applyOne(cmd); } catch (e) { ok = false; }
+        if (ok) { applied++; } else { errors.push(cmd); }
+      });
+      mygo.call('GGBBridge.Report', msg.id || '', applied, errors);
+    } finally {
+      applying = false;
+    }
+    if (pending.length) setTimeout(flush, 0);
+  }
+
+  if (window.mygo && mygo.on) {
+    mygo.on('ggb-cmds', function (payload) {
+      var msg = payload;
+      if (typeof payload === 'string') {
+        try { msg = JSON.parse(payload); } catch (e) { return; }
+      }
+      pending.push(msg);
+      flush();
+    });
+  }
+})();
+</script>
+</body>
+</html>

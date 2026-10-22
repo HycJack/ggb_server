@@ -24,7 +24,8 @@ import (
 type app struct {
 	win *mygo.Window
 
-	s settings // OpenAI 端点配置（持久化）
+	s     settings // OpenAI 端点配置（持久化）
+	draft settings // 设置弹窗的草稿：只有点「保存」才写回 s
 
 	// 会话（本地保存）
 	convs    []conversation
@@ -96,6 +97,13 @@ func maxID(convs []conversation) uint {
 		}
 	}
 	return max
+}
+
+// openSettings 打开设置弹窗：先把当前配置复制到草稿，
+// 弹窗里的输入不会直接污染真实配置。
+func (a *app) openSettings() {
+	a.draft = a.s
+	a.showSettings = true
 }
 
 func (a *app) rebuildClient() {

@@ -71,7 +71,9 @@ func (a *app) sidebar(c *ui.Context, t *ui.Theme) {
 			}
 		})
 
-		ui.PrimaryButton(c, "新建对话")
+		if ui.PrimaryButton(c, "新建对话").Clicked() {
+			a.newConversation()
+		}
 
 		// 会话列表（分组、相对时间由组件内置）
 		ui.Scroll(c).Grow(1).Gap(2).Children(func() {
@@ -91,7 +93,7 @@ func (a *app) sidebar(c *ui.Context, t *ui.Theme) {
 			}
 			ui.Spacer(c)
 			if ui.Button(c, "设置").Clicked() {
-				a.showSettings = true
+				a.openSettings()
 			}
 		})
 	})
@@ -165,28 +167,29 @@ func (a *app) settingsModal(c *ui.Context, t *ui.Theme) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "接口地址").FontSize(12).TextColor(t.TextMuted)
-				ui.TextInput(c, &a.s.APIBase).Placeholder("https://api.deepseek.com")
+				ui.TextInput(c, &a.draft.APIBase).Placeholder("https://api.deepseek.com")
 			})
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "API Key").FontSize(12).TextColor(t.TextMuted)
-				ui.TextInput(c, &a.s.APIKey).Placeholder("sk-...")
+				ui.TextInput(c, &a.draft.APIKey).Placeholder("sk-...")
 			})
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "模型").FontSize(12).TextColor(t.TextMuted)
-				ui.TextInput(c, &a.s.Model).Placeholder("deepseek-chat")
+				ui.TextInput(c, &a.draft.Model).Placeholder("deepseek-chat")
 			})
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "系统提示词").FontSize(12).TextColor(t.TextMuted)
-				ui.TextInput(c, &a.s.SystemPrompt)
+				ui.TextInput(c, &a.draft.SystemPrompt)
 			})
-			ui.Checkbox(c, &a.s.UseTools, "启用画板工具调用（ReAct，推荐）")
-			ui.Checkbox(c, &a.s.AutoBoard, "自动把 GGB 指令画到画板（围栏兜底）")
+			ui.Checkbox(c, &a.draft.UseTools, "启用画板工具调用（ReAct，推荐）")
+			ui.Checkbox(c, &a.draft.AutoBoard, "自动把 GGB 指令画到画板（围栏兜底）")
 
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				if ui.Button(c, "取消").Clicked() {
 					a.showSettings = false
 				}
 				if ui.PrimaryButton(c, "保存").Clicked() {
+					a.s = a.draft // 只有保存才写回真实配置
 					a.rebuildClient()
 					a.saveAll()
 					a.showSettings = false
@@ -244,7 +247,7 @@ func (a *app) composer(c *ui.Context, t *ui.Theme) {
 			ui.Spacer(c)
 			if !a.configured() {
 				if ui.Text(c, "还没有配置接口，点这里设置").FontSize(12).TextColor(t.Danger).Clicked() {
-					a.showSettings = true
+					a.openSettings()
 				}
 			}
 		})
@@ -286,7 +289,7 @@ func (a *app) welcome(c *ui.Context, t *ui.Theme) {
 		ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(12).Children(func() {
 			ui.Text(c, "先配置一个 OpenAI 兼容接口").FontSize(15)
 			if ui.PrimaryButton(c, "打开设置").Clicked() {
-				a.showSettings = true
+				a.openSettings()
 			}
 		})
 		return

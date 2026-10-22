@@ -277,10 +277,12 @@ func (a *app) buildMessages(userText, imageDataURL string) []OAMessage {
 		out = append(out, textMessage("system", a.s.SystemPrompt))
 	}
 	msgs := a.currentMsgs()
-	// 去掉刚 append 的用户消息与占位回复，从历史正文构建
+	// 去掉刚 append 的用户消息与占位回复（末尾两条），只留更早的历史
 	history := msgs
-	if len(history) > 2 {
+	if len(history) >= 2 {
 		history = history[:len(history)-2]
+	} else {
+		history = nil
 	}
 	if len(history) > 20 {
 		history = history[len(history)-20:]

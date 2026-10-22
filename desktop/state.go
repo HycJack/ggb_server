@@ -56,6 +56,10 @@ func loadSettings() settings {
 	if p, err := settingsPath(); err == nil {
 		if data, err := os.ReadFile(p); err == nil {
 			json.Unmarshal(data, &s)
+			if s.SystemPrompt == "" {
+				// 旧版本的设置文件没有这个字段；用户清空提示词的情况极少，回填默认更稳
+				s.SystemPrompt = defaultSettings().SystemPrompt
+			}
 		}
 	}
 	return s

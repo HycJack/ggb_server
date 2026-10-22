@@ -2,10 +2,7 @@ module ggb_desktop
 
 go 1.27.1
 
-require (
-	github.com/HycJack/MujicaUI v0.0.0-20261015040514-cb1e6d85bdae
-	github.com/egoist/mygo v0.5.1
-)
+require github.com/egoist/mygo v0.5.1
 
 require (
 	github.com/ebitengine/purego v0.11.1 // indirect

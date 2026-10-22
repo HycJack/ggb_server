@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/HycJack/MujicaUI/chat"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -44,16 +43,15 @@ func demoApp() *app {
 		{ID: 2, Title: "正方体的截面问题", UpdatedAt: time.Now().AddDate(0, 0, -1)},
 		{ID: 3, Title: "三角函数化简", UpdatedAt: time.Now().AddDate(0, 0, -3)},
 	}
-	a.convSel.Selected = "1"
 	a.convID = 1
 	return a
 }
 
 func demoThread() []*uiMsg {
 	return []*uiMsg{
-		{id: "u1", role: chat.MessageUser, text: "画出函数 y = x² − 3x + 1 的图像，并标出顶点。", done: true},
+		{id: "u1", role: roleUser, text: "画出函数 y = x² − 3x + 1 的图像，并标出顶点。", done: true},
 		{
-			id: "a1", role: chat.MessageAssistant, done: true, open: true,
+			id: "a1", role: roleAssistant, done: true, open: true,
 			thinking: "这是一道二次函数题。先识别顶点式：y = (x − 1.5)² − 1.25，顶点为 (1.5, −1.25)。需要生成抛物线指令并标注顶点。",
 			text:     "题目类型：**函数**\n\n提取的数学元素：\n- 二次函数 f(x) = x² − 3x + 1\n- 顶点 V(1.5, −1.25)\n- 与 y 轴交点 (0, 1)\n\n```ggb\nf(x) = x^2 - 3x + 1\nV = Vertex(f)\n```",
 			ggb:      "f(x) = x^2 - 3x + 1\nV = Vertex(f)",
@@ -64,7 +62,6 @@ func demoThread() []*uiMsg {
 func TestScreenshotWelcome(t *testing.T) {
 	a := demoApp()
 	a.convID = 0 // 走欢迎页分支（未选会话）
-	a.convSel.Selected = ""
 	tester, p := screenshot(t, "welcome", a)
 	if !tester.HasText("画一道数学题") {
 		t.Errorf("welcome greeting missing in %q", tester.Texts())
@@ -104,9 +101,9 @@ func TestScreenshotConversation(t *testing.T) {
 func TestScreenshotStreaming(t *testing.T) {
 	a := demoApp()
 	a.msgsOf[1] = append(demoThread(), &uiMsg{
-		id: "u2", role: chat.MessageUser, text: "画一个正方体并标出对角线。", done: true,
+		id: "u2", role: roleUser, text: "画一个正方体并标出对角线。", done: true,
 	}, &uiMsg{
-		id: "a2", role: chat.MessageAssistant,
+		id: "a2", role: roleAssistant,
 		thinking: "正方体有 8 个顶点、12 条棱。对角线连接不相邻的顶点，例如 A 到 G…",
 		text:     "正方体 ABCD-EFGH，棱长 3，连接对角线 AG。",
 		open:     true,

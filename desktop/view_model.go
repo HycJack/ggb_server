@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HycJack/MujicaUI/chat"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
@@ -29,10 +28,9 @@ type app struct {
 	msgsOf   map[uint][]*uiMsg
 	convID   uint
 	nextConv uint
-	convSel  chat.ConversationListState
 
 	// 消息
-	list   chat.MessageListState
+	list   ui.ListState
 	input  string
 	nextID int
 
@@ -231,7 +229,7 @@ func (a *app) send(text string) {
 		a.convs = append(a.convs, conversation{ID: a.convID, Title: truncTitle(text)})
 	}
 	a.nextID++
-	userMsg := &uiMsg{id: "u" + strconv.Itoa(a.nextID), role: chat.MessageUser, text: text, done: true}
+	userMsg := &uiMsg{id: "u" + strconv.Itoa(a.nextID), role: roleUser, text: text, done: true}
 	if a.attachData != "" {
 		userMsg.dataURL = a.attachData
 		userMsg.bitmap = a.attachBitmap
@@ -239,7 +237,7 @@ func (a *app) send(text string) {
 	a.msgsOf[a.convID] = append(a.msgsOf[a.convID], userMsg)
 	a.clearAttachment()
 	a.nextID++
-	reply := &uiMsg{id: "a" + strconv.Itoa(a.nextID), role: chat.MessageAssistant, open: true, started: time.Now(), step: "思考中"}
+	reply := &uiMsg{id: "a" + strconv.Itoa(a.nextID), role: roleAssistant, open: true, started: time.Now(), step: "思考中"}
 	a.msgsOf[a.convID] = append(a.msgsOf[a.convID], reply)
 	a.input = ""
 
@@ -277,7 +275,7 @@ func (a *app) buildMessages(userText, imageDataURL string) []OAMessage {
 		if m.errText != "" || m.text == "" {
 			continue
 		}
-		if m.role == chat.MessageUser {
+		if m.role == roleUser {
 			out = append(out, textMessage("user", m.text))
 		} else {
 			out = append(out, textMessage("assistant", m.text))
@@ -330,7 +328,7 @@ func (a *app) replyDataImage(reply *uiMsg) string {
 	msgs := a.currentMsgs()
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i] == reply {
-			if i > 0 && msgs[i-1].role == chat.MessageUser {
+			if i > 0 && msgs[i-1].role == roleUser {
 				return msgs[i-1].dataURL
 			}
 			return ""

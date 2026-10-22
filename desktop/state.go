@@ -8,8 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HycJack/MujicaUI/chat"
 	"github.com/egoist/mygo/ui"
+)
+
+// 消息角色（对应 uiMsg.role）。
+const (
+	roleUser int = iota
+	roleAssistant
 )
 
 // conversation 是侧栏会话条目；消息体在 app.msgsOf 里，本地持久化。
@@ -75,7 +80,7 @@ func saveSettings(s settings) {
 
 // storedMsg 是落盘的消息（图片不落盘，重开只保留文字）。
 type storedMsg struct {
-	Role     int    `json:"role"` // chat.MessageRole 值：0=user 1=assistant
+	Role     int    `json:"role"` // roleUser/roleAssistant
 	Text     string `json:"text"`
 	Thinking string `json:"thinking,omitempty"`
 	GGB      string `json:"ggb,omitempty"`
@@ -123,7 +128,7 @@ func storedToUi(sc storedConv) []*uiMsg {
 	for _, sm := range sc.Msgs {
 		out = append(out, &uiMsg{
 			id:       "s" + strconv.Itoa(len(out)),
-			role:     chat.MessageRole(sm.Role),
+			role:     sm.Role,
 			text:     sm.Text,
 			thinking: sm.Thinking,
 			ggb:      sm.GGB,
@@ -163,7 +168,7 @@ func saveHistory(msgs map[uint][]*uiMsg, convs []conversation) {
 // uiMsg 是视图层的消息：一条用户提问或一条助手回复。
 type uiMsg struct {
 	id   string
-	role chat.MessageRole
+	role int
 
 	text     string // 用户正文 / 助手的 markdown 输出
 	thinking string // reasoning 增量累积

@@ -1,4 +1,4 @@
-// ggb-desktop：ggb_server 的原生桌面客户端（MyGo + MujicaUI mint 风格）。
+// ggb-desktop：ggb_server 的原生桌面客户端（纯 MyGo 原生组件）。
 //
 //	go run .          # 连接 http://localhost:8080 的 ggb_server
 //	go test ./...     # 无头渲染截图（testdata/*.png）

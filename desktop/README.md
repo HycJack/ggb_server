@@ -1,6 +1,6 @@
 # ggb-desktop
 
-ggb_server 的原生桌面客户端：MyGo 自绘 UI（MujicaUI mint 风格组件）+ 内嵌 GeoGebra 画板。
+ggb_server 的原生桌面客户端：MyGo 原生组件（参照官方 markdown-chat 等示例的写法）+ 内嵌 GeoGebra 画板。
 聊天直连**任意 OpenAI 兼容接口**（DeepSeek / 通义 / vLLM / one-api …），不依赖 ggb_server。
 
 ## 运行

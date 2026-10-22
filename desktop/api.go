@@ -104,6 +104,8 @@ func (c *OpenAIClient) Chat(model string, messages []OAMessage, onEvent func(OAE
 				Delta struct {
 					Content   string `json:"content"`
 					Reasoning string `json:"reasoning_content"`
+					// OpenRouter 等网关用 reasoning 而不是 reasoning_content
+					ReasoningAlt string `json:"reasoning"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Error *struct {
@@ -118,8 +120,12 @@ func (c *OpenAIClient) Chat(model string, messages []OAMessage, onEvent func(OAE
 		}
 		if len(chunk.Choices) > 0 {
 			d := chunk.Choices[0].Delta
-			if d.Content != "" || d.Reasoning != "" {
-				onEvent(OAEvent{Content: d.Content, Reasoning: d.Reasoning})
+			reasoning := d.Reasoning
+			if reasoning == "" {
+				reasoning = d.ReasoningAlt
+			}
+			if d.Content != "" || reasoning != "" {
+				onEvent(OAEvent{Content: d.Content, Reasoning: reasoning})
 			}
 		}
 	}

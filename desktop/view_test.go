@@ -51,7 +51,11 @@ func demoThread() []*uiMsg {
 	return []*uiMsg{
 		{id: "u1", role: roleUser, text: "画出函数 y = x² − 3x + 1 的图像，并标出顶点。", done: true},
 		{
-			id: "a1", role: roleAssistant, done: true, open: true,
+			id: "a1", role: roleAssistant, done: true, open: true, toolsOpen: true, usedTools: true,
+			tools: []toolStep{
+				{Name: "geogebra_run", Args: "f(x) = x^2 - 3x + 1 ; V = Vertex(f)", Result: "已应用 2 条，画板现有 4 个对象"},
+				{Name: "geogebra_read", Args: "", Result: "画板共 4 个对象"},
+			},
 			thinking: "这是一道二次函数题。先识别顶点式：y = (x − 1.5)² − 1.25，顶点为 (1.5, −1.25)。需要生成抛物线指令并标注顶点。",
 			text:     "题目类型：**函数**\n\n提取的数学元素：\n- 二次函数 f(x) = x² − 3x + 1\n- 顶点 V(1.5, −1.25)\n- 与 y 轴交点 (0, 1)\n\n```ggb\nf(x) = x^2 - 3x + 1\nV = Vertex(f)\n```",
 			ggb:      "f(x) = x^2 - 3x + 1\nV = Vertex(f)",

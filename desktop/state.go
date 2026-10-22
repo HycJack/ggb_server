@@ -199,12 +199,36 @@ type uiMsg struct {
 
 	step      string // 进行中的状态标签
 	done      bool
-	open      bool      // 思考块默认展开
-	started   time.Time // 回复开始时间
-	usedTools bool      // 本条回复用过画板工具（围栏兜底跳过）
+	open      bool       // 思考块默认展开
+	toolsOpen bool       // 工具面板默认展开
+	started   time.Time  // 回复开始时间
+	usedTools bool       // 本条回复用过画板工具（围栏兜底跳过）
+	tools     []toolStep // 画板工具调用记录
 
 	bitmap  *ui.Bitmap // 用户消息的图片（本地预览）
 	dataURL string     // 发给视觉模型的 data URL（不落盘）
+}
+
+// toolStep 是一次画板工具调用的记录，显示在回复里。
+type toolStep struct {
+	Name   string // 工具名
+	Args   string // 参数摘要
+	Result string // 执行结果摘要
+	Failed bool
+}
+
+// toolLabel 给工具名一个中文说法。
+func toolLabel(name string) string {
+	switch name {
+	case "geogebra_run":
+		return "作图"
+	case "geogebra_read":
+		return "读画板"
+	case "geogebra_export":
+		return "导出"
+	default:
+		return name
+	}
 }
 
 // stepLabel 保留 streaming 提示的措辞。

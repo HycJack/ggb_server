@@ -329,6 +329,30 @@ func (a *app) message(c *ui.Context, t *ui.Theme, m *uiMsg) {
 				ui.Text(c, m.thinking).Selectable().FontSize(12).TextColor(t.TextMuted)
 			})
 		}
+		if len(m.tools) > 0 {
+			label := "画板操作（" + strconv.Itoa(len(m.tools)) + "）"
+			ui.Collapsible(c, label, &m.toolsOpen, func() {
+				ui.Column(c).Gap(6).Children(func() {
+					for _, s := range m.tools {
+						ui.Column(c).Gap(2).Padding(6, 10).Radius(8).Background(t.Surface).Children(func() {
+							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+								badge := t.Accent
+								if s.Failed {
+									badge = t.Danger
+								}
+								ui.Text(c, toolLabel(s.Name)).FontSize(11).Bold().TextColor(badge)
+								if s.Args != "" {
+									ui.Text(c, s.Args).FontSize(11).TextColor(t.TextMuted).Grow(1)
+								}
+							})
+							if s.Result != "" {
+								ui.Text(c, s.Result).FontSize(11).TextColor(t.TextMuted)
+							}
+						})
+					}
+				})
+			})
+		}
 		if m.errText != "" {
 			ui.Text(c, m.errText).Selectable().TextColor(t.Danger).FontSize(13)
 		}

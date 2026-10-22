@@ -380,7 +380,10 @@ func (a *app) streamChat(userText string, reply *uiMsg) {
 		}
 		messages = append(messages, OAMessage{Role: "assistant", Content: assistantContent, ToolCalls: res.ToolCalls})
 		for _, tc := range res.ToolCalls {
+			step := toolStep{Name: tc.Function.Name, Args: summarizeToolArgs(tc.Function.Arguments)}
 			result := a.execTool(tc)
+			step.Result, step.Failed = summarizeToolResult(result)
+			a.mutate(func() { reply.tools = append(reply.tools, step) })
 			messages = append(messages, OAMessage{Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name, Content: result})
 		}
 	}
@@ -393,6 +396,57 @@ func (a *app) streamChat(userText string, reply *uiMsg) {
 		a.applyHTMLFence(reply)
 		a.saveAll()
 	})
+}
+
+// summarizeToolArgs 把工具参数压成一行可读摘要。
+func summarizeToolArgs(argsJSON string) string {
+	var args struct {
+		Commands    []string `json:"commands"`
+		Perspective string   `json:"perspective"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(args.Commands))
+	for _, c := range args.Commands {
+		parts = append(parts, c)
+	}
+	s := strings.Join(parts, " ; ")
+	if args.Perspective == "AT" {
+		s = "[3D] " + s
+	}
+	if len([]rune(s)) > 90 {
+		s = string([]rune(s)[:90]) + "…"
+	}
+	return s
+}
+
+// summarizeToolResult 把工具返回压成一行摘要。
+func summarizeToolResult(result string) (string, bool) {
+	var r struct {
+		Applied int      `json:"applied"`
+		Failed  []string `json:"failed"`
+		Objects int      `json:"objects"`
+		Count   int      `json:"objectCount"`
+		Error   string   `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(result), &r); err != nil {
+		return result, false
+	}
+	if r.Error != "" {
+		return r.Error, true
+	}
+	out := "已应用 " + strconv.Itoa(r.Applied) + " 条"
+	if len(r.Failed) > 0 {
+		out += "，失败 " + strconv.Itoa(len(r.Failed)) + " 条"
+	}
+	if r.Objects > 0 {
+		out += "，画板现有 " + strconv.Itoa(r.Objects) + " 个对象"
+	}
+	if r.Count > 0 {
+		out = "画板共 " + strconv.Itoa(r.Count) + " 个对象"
+	}
+	return out, len(r.Failed) > 0
 }
 
 // execTool 执行模型请求的一个画板工具，返回给模型的 JSON 结果。
